@@ -1,0 +1,96 @@
+@import 'primereact/resources/themes/lara-light-blue/theme.css';
+@import 'primereact/resources/primereact.min.css';
+@import 'primeicons/primeicons.css';
+@import 'primeflex/primeflex.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--surface-ground);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Suporte instantâneo ao Tema Escuro sobre as variáveis do PrimeReact Lara */
+html.dark-theme {
+  --surface-a: #1f2937;
+  --surface-b: #0f172a;
+  --surface-c: rgba(255, 255, 255, 0.04);
+  --surface-d: #334155;
+  --surface-e: #1e293b;
+  --surface-f: #1e293b;
+  --text-color: #f8fafc;
+  --text-color-secondary: #94a3b8;
+  --primary-color: #60a5fa;
+  --primary-color-text: #0f172a;
+  --surface-0: #0f172a;
+  --surface-50: #1e293b;
+  --surface-100: #334155;
+  --surface-200: #475569;
+  --surface-300: #64748b;
+  --surface-400: #94a3b8;
+  --surface-500: #cbd5e1;
+  --surface-600: #e2e8f0;
+  --surface-700: #f1f5f9;
+  --surface-800: #f8fafc;
+  --surface-900: #ffffff;
+  --surface-ground: #0f172a;
+  --surface-section: #0f172a;
+  --surface-card: #1e293b;
+  --surface-overlay: #1e293b;
+  --surface-border: rgba(255, 255, 255, 0.12);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  color-scheme: dark;
+}
+
+html.dark-theme .p-card,
+html.dark-theme .p-toolbar,
+html.dark-theme .p-dialog .p-dialog-header,
+html.dark-theme .p-dialog .p-dialog-content,
+html.dark-theme .p-dialog .p-dialog-footer,
+html.dark-theme .p-datatable .p-datatable-header,
+html.dark-theme .p-datatable .p-datatable-thead > tr > th,
+html.dark-theme .p-datatable .p-datatable-tbody > tr,
+html.dark-theme .p-paginator {
+  background-color: var(--surface-card);
+  color: var(--text-color);
+  border-color: var(--surface-border);
+}
+
+html.dark-theme .p-inputtext,
+html.dark-theme .p-dropdown,
+html.dark-theme .p-multiselect {
+  background-color: var(--surface-0);
+  color: var(--text-color);
+  border-color: var(--surface-border);
+}
+
+.p-card .p-card-body {
+  padding: 1.25rem;
+}
+
+.p-card .p-card-content {
+  padding: 0;
+}
+
+.summary-card-income {
+  border-top: 4px solid #10b981;
+}
+
+.summary-card-paid {
+  border-top: 4px solid #3b82f6;
+}
+
+.summary-card-pending {
+  border-top: 4px solid #f97316;
+}
+
+.summary-card-balance {
+  border-top: 4px solid #6366f1;
+}
