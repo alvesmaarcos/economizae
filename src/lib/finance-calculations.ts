@@ -1,9 +1,11 @@
 import {
+  CardInvoiceSummary,
   Category,
   CategoryBreakdownItem,
   CreateTransactionInput,
   DueStatusInfo,
   MonthlySummary,
+  PaymentCard,
   Transaction
 } from '@/types/finance';
 
@@ -25,6 +27,29 @@ export function formatDateBR(isoDate: string | null | undefined): string {
   const parts = isoDate.split('T')[0].split('-');
   if (parts.length !== 3) return isoDate;
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+/**
+ * Formata 'YYYY-MM' para nome legível do mês/ano (ex: 'Dezembro/2026')
+ */
+export function formatCompetenceMonthBR(competenceMonth: string): string {
+  const [y, m] = competenceMonth.split('-').map(Number);
+  const months = [
+    'Janeiro',
+    'Fevereiro',
+    'Março',
+    'Abril',
+    'Maio',
+    'Junho',
+    'Julho',
+    'Agosto',
+    'Setembro',
+    'Outubro',
+    'Novembro',
+    'Dezembro'
+  ];
+  const monthName = months[(m || 1) - 1] || competenceMonth;
+  return `${monthName}/${y}`;
 }
 
 /**
@@ -62,22 +87,73 @@ export function getCompetenceMonth(date: Date): string {
 }
 
 /**
- * Soma meses a uma data 'YYYY-MM-DD' preservando o dia com segurança para fins de mês (ex: 31/01 -> 28/02)
+ * Constrói uma string 'YYYY-MM-DD' limitando o dia ao máximo de dias daquele mês (ex: 31 em Fev -> 28/29)
  */
-export function addMonthsToISODate(isoDate: string, monthsToAdd: number): string {
-  const [year, month, day] = isoDate.split('T')[0].split('-').map(Number);
-  const targetMonthIndex = month - 1 + monthsToAdd;
-  const targetYear = year + Math.floor(targetMonthIndex / 12);
-  const normalizedMonth = ((targetMonthIndex % 12) + 12) % 12;
-
-  // Último dia do mês alvo
-  const maxDayInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
-  const safeDay = Math.min(day, maxDayInTargetMonth);
+export function buildSafeISODate(
+  year: number,
+  monthIndexZeroBased: number,
+  desiredDay: number
+): string {
+  const targetYear = year + Math.floor(monthIndexZeroBased / 12);
+  const normalizedMonth = ((monthIndexZeroBased % 12) + 12) % 12;
+  const maxDayInMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+  const safeDay = Math.max(1, Math.min(desiredDay, maxDayInMonth));
 
   const yStr = String(targetYear);
   const mStr = String(normalizedMonth + 1).padStart(2, '0');
   const dStr = String(safeDay).padStart(2, '0');
   return `${yStr}-${mStr}-${dStr}`;
+}
+
+/**
+ * Soma meses a uma data 'YYYY-MM-DD' preservando o dia com segurança para fins de mês (ex: 31/01 -> 28/02)
+ */
+export function addMonthsToISODate(
+  isoDate: string,
+  monthsToAdd: number
+): string {
+  const [year, month, day] = isoDate.split('T')[0].split('-').map(Number);
+  return buildSafeISODate(year, month - 1 + monthsToAdd, day);
+}
+
+/**
+ * Calcula a data de vencimento da 1ª fatura ('YYYY-MM-DD') para uma compra no Cartão de Crédito,
+ * a partir da Data da Compra, do Dia de Fechamento (closingDay) e do Dia de Vencimento (dueDay).
+ *
+ * Regras:
+ * 1. Se dia_da_compra < closingDay: a compra entra na fatura que fecha no próprio mês da compra.
+ * 2. Se dia_da_compra >= closingDay: a fatura daquele mês já fechou, então a compra entra na fatura
+ *    que fecha no mês seguinte.
+ * 3. Determinado o mês de fechamento da fatura:
+ *    - Se dueDay > closingDay (ex.: fecha dia 03 e vence dia 10): o vencimento ocorre no mesmo mês do fechamento.
+ *    - Se dueDay <= closingDay (ex.: fecha dia 25 e vence dia 05): o vencimento ocorre no mês seguinte ao fechamento.
+ */
+export function calculateCreditCardFirstDueDate(
+  purchaseDateISO: string,
+  closingDay: number,
+  dueDay: number
+): string {
+  const [pYear, pMonth, pDay] = purchaseDateISO
+    .split('T')[0]
+    .split('-')
+    .map(Number);
+
+  const safeClosingDay = Math.max(1, Math.min(31, Number(closingDay) || 1));
+  const safeDueDay = Math.max(1, Math.min(31, Number(dueDay) || 10));
+
+  // Mês base (0-indexed) em que a fatura desta compra fecha
+  let closingMonthIndex = pMonth - 1;
+  if (pDay >= safeClosingDay) {
+    closingMonthIndex += 1;
+  }
+
+  // Mês em que a fatura vence
+  let dueMonthIndex = closingMonthIndex;
+  if (safeDueDay <= safeClosingDay) {
+    dueMonthIndex += 1;
+  }
+
+  return buildSafeISODate(pYear, dueMonthIndex, safeDueDay);
 }
 
 /**
@@ -116,9 +192,7 @@ export function getDueStatus(
     return {
       state: 'overdue',
       label:
-        absDays === 1
-          ? 'Vencida ontem'
-          : `Vencida há ${absDays} dias`,
+        absDays === 1 ? 'Vencida ontem' : `Vencida há ${absDays} dias`,
       severity: 'danger',
       daysDiff: diff,
       icon: 'pi-exclamation-triangle'
@@ -239,14 +313,39 @@ export function calculateMonthlySummary(
 }
 
 /**
- * Gera os registros de transação a partir do formulário (Único, Fixo Mensal ou Parcelado 1..N)
+ * Gera os registros de transação a partir do formulário (Único, Fixo Mensal ou Parcelado 1..N).
+ * Se payment_method === 'credit_card' e um cartão com closing_day/due_day for informado,
+ * calcula automaticamente a data de vencimento da 1ª fatura a partir de purchase_date!
  */
 export function generateRecurringTransactions(
   input: CreateTransactionInput,
-  idGenerator: () => string = () => crypto.randomUUID()
+  idGenerator: () => string = () => crypto.randomUUID(),
+  selectedCard?: PaymentCard | null
 ): Omit<Transaction, 'created_at'>[] {
-  const baseDate = input.due_date;
+  const rawPurchaseDate = input.purchase_date || input.due_date;
+  let baseDueDate = input.due_date;
+
+  if (
+    input.payment_method === 'credit_card' &&
+    selectedCard &&
+    selectedCard.closing_day &&
+    selectedCard.due_day
+  ) {
+    baseDueDate = calculateCreditCardFirstDueDate(
+      rawPurchaseDate,
+      selectedCard.closing_day,
+      selectedCard.due_day
+    );
+  } else if (input.payment_method === 'debit_card' && input.purchase_date) {
+    baseDueDate = input.purchase_date;
+  }
+
   const recurrenceType = input.recurrence_type || 'single';
+  const cardId =
+    input.payment_method === 'credit_card' ||
+    input.payment_method === 'debit_card'
+      ? input.card_id || selectedCard?.id || null
+      : null;
 
   if (recurrenceType === 'single') {
     return [
@@ -256,14 +355,14 @@ export function generateRecurringTransactions(
         amount: Number(input.amount),
         type: input.type,
         status: input.status,
-        due_date: baseDate,
+        purchase_date: rawPurchaseDate,
+        due_date: baseDueDate,
         paid_at:
-          input.status === 'paid'
-            ? input.paid_at || baseDate
-            : null,
-        competence_month: getCompetenceMonthFromDate(baseDate),
+          input.status === 'paid' ? input.paid_at || baseDueDate : null,
+        competence_month: getCompetenceMonthFromDate(baseDueDate),
         category_id: input.category_id,
         payment_method: input.payment_method,
+        card_id: cardId,
         recurrence_type: 'single',
         recurrence_group_id: null,
         installment_current: null,
@@ -276,12 +375,14 @@ export function generateRecurringTransactions(
   const groupId = idGenerator();
 
   if (recurrenceType === 'installment') {
-    const totalInstallments = Math.max(2, Math.min(60, Number(input.installment_total) || 2));
+    const totalInstallments = Math.max(
+      2,
+      Math.min(60, Number(input.installment_total) || 2)
+    );
     const items: Omit<Transaction, 'created_at'>[] = [];
 
     for (let i = 0; i < totalInstallments; i++) {
-      const targetDueDate = addMonthsToISODate(baseDate, i);
-      // Apenas a 1ª parcela respeita o status inicial escolhido se for 'paid'; as futuras nascem 'pending'
+      const targetDueDate = addMonthsToISODate(baseDueDate, i);
       const installmentStatus = i === 0 ? input.status : 'pending';
 
       items.push({
@@ -290,6 +391,7 @@ export function generateRecurringTransactions(
         amount: Number(input.amount),
         type: input.type,
         status: installmentStatus,
+        purchase_date: rawPurchaseDate,
         due_date: targetDueDate,
         paid_at:
           installmentStatus === 'paid'
@@ -298,6 +400,7 @@ export function generateRecurringTransactions(
         competence_month: getCompetenceMonthFromDate(targetDueDate),
         category_id: input.category_id,
         payment_method: input.payment_method,
+        card_id: cardId,
         recurrence_type: 'installment',
         recurrence_group_id: groupId,
         installment_current: i + 1,
@@ -310,11 +413,14 @@ export function generateRecurringTransactions(
   }
 
   // recurrenceType === 'fixed' (gera para os próximos N meses, padrão 12 meses)
-  const fixedMonths = Math.max(2, Math.min(24, Number(input.fixed_months) || 12));
+  const fixedMonths = Math.max(
+    2,
+    Math.min(24, Number(input.fixed_months) || 12)
+  );
   const fixedItems: Omit<Transaction, 'created_at'>[] = [];
 
   for (let i = 0; i < fixedMonths; i++) {
-    const targetDueDate = addMonthsToISODate(baseDate, i);
+    const targetDueDate = addMonthsToISODate(baseDueDate, i);
     const monthStatus = i === 0 ? input.status : 'pending';
 
     fixedItems.push({
@@ -323,14 +429,14 @@ export function generateRecurringTransactions(
       amount: Number(input.amount),
       type: input.type,
       status: monthStatus,
+      purchase_date: addMonthsToISODate(rawPurchaseDate, i),
       due_date: targetDueDate,
       paid_at:
-        monthStatus === 'paid'
-          ? input.paid_at || targetDueDate
-          : null,
+        monthStatus === 'paid' ? input.paid_at || targetDueDate : null,
       competence_month: getCompetenceMonthFromDate(targetDueDate),
       category_id: input.category_id,
       payment_method: input.payment_method,
+      card_id: cardId,
       recurrence_type: 'fixed',
       recurrence_group_id: groupId,
       installment_current: null,
@@ -340,6 +446,110 @@ export function generateRecurringTransactions(
   }
 
   return fixedItems;
+}
+
+/**
+ * Consolida as faturas de Cartão de Crédito de cada cartão no mês selecionado
+ */
+export function calculateCardInvoicesForMonth(
+  transactions: Transaction[],
+  cards: PaymentCard[],
+  competenceMonth: string,
+  todayISO: string = toISODateString(new Date())
+): CardInvoiceSummary[] {
+  const cardMap = new Map<string, PaymentCard>();
+  for (const card of cards) {
+    cardMap.set(card.id, card);
+  }
+
+  const grouped = new Map<
+    string,
+    {
+      card: PaymentCard;
+      pendingAmount: number;
+      paidAmount: number;
+      pendingCount: number;
+      totalCount: number;
+      dueDateISO: string;
+    }
+  >();
+
+  const [yearNum, monthNum] = competenceMonth.split('-').map(Number);
+
+  for (const tx of transactions) {
+    if (tx.type !== 'expense' || tx.payment_method !== 'credit_card') continue;
+    if (!tx.card_id) continue;
+
+    const card = cardMap.get(tx.card_id);
+    if (!card) continue;
+
+    if (!grouped.has(card.id)) {
+      const defaultDueDate = card.due_day
+        ? buildSafeISODate(yearNum, (monthNum || 1) - 1, card.due_day)
+        : tx.due_date;
+
+      grouped.set(card.id, {
+        card,
+        pendingAmount: 0,
+        paidAmount: 0,
+        pendingCount: 0,
+        totalCount: 0,
+        dueDateISO: defaultDueDate
+      });
+    }
+
+    const entry = grouped.get(card.id)!;
+    const amount = Number(tx.amount) || 0;
+    entry.totalCount += 1;
+
+    if (tx.status === 'paid') {
+      entry.paidAmount = Math.round((entry.paidAmount + amount) * 100) / 100;
+    } else {
+      entry.pendingAmount =
+        Math.round((entry.pendingAmount + amount) * 100) / 100;
+      entry.pendingCount += 1;
+      entry.dueDateISO = tx.due_date;
+    }
+  }
+
+  return Array.from(grouped.values())
+    .map((item) => {
+      const totalAmount =
+        Math.round((item.pendingAmount + item.paidAmount) * 100) / 100;
+      const invoiceStatus: 'paid' | 'pending' =
+        item.pendingCount === 0 ? 'paid' : 'pending';
+      const dueStatus = getDueStatus(
+        {
+          status: invoiceStatus,
+          due_date: item.dueDateISO,
+          type: 'expense',
+          paid_at: invoiceStatus === 'paid' ? item.dueDateISO : null
+        },
+        todayISO
+      );
+
+      const limitUsagePercent =
+        item.card.credit_limit && item.card.credit_limit > 0
+          ? Math.min(
+              100,
+              Math.round((totalAmount / item.card.credit_limit) * 1000) / 10
+            )
+          : null;
+
+      return {
+        card: item.card,
+        competenceMonth,
+        dueDateISO: item.dueDateISO,
+        pendingAmount: item.pendingAmount,
+        paidAmount: item.paidAmount,
+        totalAmount,
+        pendingCount: item.pendingCount,
+        totalCount: item.totalCount,
+        dueStatus,
+        limitUsagePercent
+      };
+    })
+    .sort((a, b) => a.dueDateISO.localeCompare(b.dueDateISO));
 }
 
 /**
@@ -394,7 +604,8 @@ export function calculateCategoryBreakdown(
     if (tx.status === 'paid') {
       entry.paidAmount = Math.round((entry.paidAmount + amount) * 100) / 100;
     } else {
-      entry.pendingAmount = Math.round((entry.pendingAmount + amount) * 100) / 100;
+      entry.pendingAmount =
+        Math.round((entry.pendingAmount + amount) * 100) / 100;
     }
     entry.totalAmount = Math.round((entry.totalAmount + amount) * 100) / 100;
   }
@@ -404,6 +615,8 @@ export function calculateCategoryBreakdown(
     .map((item) => ({
       ...item,
       percentage:
-        grandTotal > 0 ? Math.round((item.totalAmount / grandTotal) * 1000) / 10 : 0
+        grandTotal > 0
+          ? Math.round((item.totalAmount / grandTotal) * 1000) / 10
+          : 0
     }));
 }

@@ -20,6 +20,23 @@ export type PaymentMethod =
 
 export type RecurrenceType = 'single' | 'fixed' | 'installment';
 
+export type CardModality = 'both' | 'credit' | 'debit';
+
+export interface PaymentCard {
+  id: string;
+  user_id?: string;
+  name: string;
+  color: string;
+  modality: CardModality;
+  /** Dia de fechamento da fatura (1 a 31) — aplicável quando modality for 'both' ou 'credit' */
+  closing_day: number | null;
+  /** Dia de vencimento da fatura (1 a 31) — aplicável quando modality for 'both' ou 'credit' */
+  due_day: number | null;
+  /** Limite de crédito opcional para acompanhar o uso na fatura do mês */
+  credit_limit: number | null;
+  created_at?: string;
+}
+
 export interface Category {
   id: string;
   user_id?: string;
@@ -37,11 +54,16 @@ export interface Transaction {
   amount: number;
   type: TransactionType;
   status: TransactionStatus;
-  due_date: string; // 'YYYY-MM-DD'
+  /** Data original em que a compra foi realizada ('YYYY-MM-DD') */
+  purchase_date?: string | null;
+  /** Data de vencimento ou efetivação no fluxo de caixa ('YYYY-MM-DD') */
+  due_date: string;
   paid_at: string | null; // 'YYYY-MM-DD' | null
   competence_month: string; // 'YYYY-MM'
   category_id: string | null;
   payment_method: PaymentMethod | null;
+  /** ID do cartão utilizado quando payment_method for 'credit_card' ou 'debit_card' */
+  card_id?: string | null;
   recurrence_type: RecurrenceType;
   recurrence_group_id: string | null;
   installment_current: number | null;
@@ -55,10 +77,14 @@ export interface CreateTransactionInput {
   amount: number;
   type: TransactionType;
   status: TransactionStatus;
+  /** Data da compra (especialmente relevante para cartão de crédito/débito) */
+  purchase_date?: string | null;
+  /** Data de vencimento (calculada automaticamente para cartão de crédito) */
   due_date: string; // 'YYYY-MM-DD'
   paid_at?: string | null;
   category_id: string | null;
   payment_method: PaymentMethod | null;
+  card_id?: string | null;
   recurrence_type: RecurrenceType;
   installment_total?: number | null;
   fixed_months?: number; // padrão 12 meses quando 'fixed'
@@ -78,6 +104,19 @@ export interface DueStatusInfo {
   severity: 'success' | 'danger' | 'warning' | 'info';
   daysDiff: number;
   icon: string;
+}
+
+export interface CardInvoiceSummary {
+  card: PaymentCard;
+  competenceMonth: string;
+  dueDateISO: string;
+  pendingAmount: number;
+  paidAmount: number;
+  totalAmount: number;
+  pendingCount: number;
+  totalCount: number;
+  dueStatus: DueStatusInfo;
+  limitUsagePercent: number | null;
 }
 
 export interface MonthlySummary {
@@ -135,6 +174,12 @@ export const PAYMENT_METHOD_LABELS: Record<
   transfer: { label: 'Transferência / TED', icon: 'pi-arrows-h' }
 };
 
+export const CARD_MODALITY_LABELS: Record<CardModality, string> = {
+  both: 'Crédito e Débito',
+  credit: 'Apenas Crédito',
+  debit: 'Apenas Débito'
+};
+
 export const PRIME_ICON_OPTIONS: { label: string; value: string }[] = [
   { label: 'Carteira', value: 'pi-wallet' },
   { label: 'Dinheiro', value: 'pi-money-bill' },
@@ -156,6 +201,36 @@ export const PRIME_ICON_OPTIONS: { label: string; value: string }[] = [
   { label: 'Celular', value: 'pi-mobile' },
   { label: 'Ferramentas / Serviços', value: 'pi-wrench' },
   { label: 'Etiqueta / Outros', value: 'pi-tag' }
+];
+
+export const DEFAULT_CARDS: PaymentCard[] = [
+  {
+    id: 'card-nubank',
+    name: 'Nubank',
+    color: '#8B5CF6',
+    modality: 'both',
+    closing_day: 3,
+    due_day: 10,
+    credit_limit: 5000
+  },
+  {
+    id: 'card-itau',
+    name: 'Itaú Click',
+    color: '#F97316',
+    modality: 'both',
+    closing_day: 18,
+    due_day: 25,
+    credit_limit: 6000
+  },
+  {
+    id: 'card-inter',
+    name: 'Banco Inter',
+    color: '#EA580C',
+    modality: 'both',
+    closing_day: 25,
+    due_day: 5,
+    credit_limit: 4000
+  }
 ];
 
 export const DEFAULT_CATEGORIES: Category[] = [

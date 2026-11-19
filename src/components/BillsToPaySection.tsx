@@ -6,13 +6,16 @@ import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import { Tag } from 'primereact/tag';
 import { Button } from 'primereact/button';
+import { ProgressBar } from 'primereact/progressbar';
 import {
   Category,
   CreateTransactionInput,
   PAYMENT_METHOD_LABELS,
+  PaymentCard,
   Transaction
 } from '@/types/finance';
 import {
+  calculateCardInvoicesForMonth,
   formatBRL,
   formatDateBR,
   getDueStatus
@@ -21,7 +24,10 @@ import {
 interface BillsToPaySectionProps {
   transactions: Transaction[];
   categories: Category[];
+  cards: PaymentCard[];
+  competenceMonth: string;
   onTogglePaid: (tx: Transaction) => void;
+  onPayCardInvoice: (cardId: string, cardName: string) => void;
   onEdit: (tx: Transaction) => void;
   onOpenNewBill: (preset?: Partial<CreateTransactionInput>) => void;
 }
@@ -29,7 +35,10 @@ interface BillsToPaySectionProps {
 export default function BillsToPaySection({
   transactions,
   categories,
+  cards,
+  competenceMonth,
   onTogglePaid,
+  onPayCardInvoice,
   onEdit,
   onOpenNewBill
 }: BillsToPaySectionProps) {
@@ -38,6 +47,17 @@ export default function BillsToPaySection({
     categories.forEach((c) => map.set(c.id, c));
     return map;
   }, [categories]);
+
+  const cardMap = React.useMemo(() => {
+    const map = new Map<string, PaymentCard>();
+    cards.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [cards]);
+
+  const cardInvoices = React.useMemo(
+    () => calculateCardInvoicesForMonth(transactions, cards, competenceMonth),
+    [transactions, cards, competenceMonth]
+  );
 
   const pendingBills = React.useMemo(() => {
     return transactions
@@ -52,12 +72,20 @@ export default function BillsToPaySection({
 
   const dueStatusBodyTemplate = (tx: Transaction) => {
     const statusInfo = getDueStatus(tx);
+    const hasDifferentPurchaseDate =
+      tx.purchase_date && tx.purchase_date !== tx.due_date;
+
     return (
       <div className="flex flex-column gap-1">
         <span className="font-semibold text-sm">
           <i className="pi pi-calendar mr-1 text-color-secondary" />
-          {formatDateBR(tx.due_date)}
+          Vence: {formatDateBR(tx.due_date)}
         </span>
+        {hasDifferentPurchaseDate && (
+          <span className="text-xs text-color-secondary">
+            Compra: {formatDateBR(tx.purchase_date)}
+          </span>
+        )}
         <div>
           <Tag
             value={statusInfo.label}
@@ -75,6 +103,7 @@ export default function BillsToPaySection({
     const paymentMeta = tx.payment_method
       ? PAYMENT_METHOD_LABELS[tx.payment_method]
       : null;
+    const txCard = tx.card_id ? cardMap.get(tx.card_id) : null;
 
     return (
       <div className="flex align-items-center gap-3">
@@ -92,6 +121,15 @@ export default function BillsToPaySection({
         <div>
           <div className="flex align-items-center flex-wrap gap-2">
             <span className="font-semibold">{tx.description}</span>
+            {txCard && (
+              <span
+                className="inline-flex align-items-center gap-1 px-2 py-1 border-round text-xs font-semibold text-white"
+                style={{ backgroundColor: txCard.color }}
+              >
+                <i className="pi pi-credit-card text-xs" />
+                {txCard.name}
+              </span>
+            )}
             {tx.recurrence_type === 'installment' && tx.installment_total && (
               <Tag
                 value={`Parcela ${tx.installment_current}/${tx.installment_total}`}
@@ -164,7 +202,8 @@ export default function BillsToPaySection({
             Contas a Pagar (Saídas Pendentes)
           </span>
           <p className="m-0 text-xs text-color-secondary">
-            Compromissos em aberto no mês ordenados por data de vencimento
+            Compromissos e faturas em aberto no mês ordenados por data de
+            vencimento
           </p>
         </div>
       </div>
@@ -173,6 +212,19 @@ export default function BillsToPaySection({
           severity={pendingBills.length > 0 ? 'warning' : 'success'}
           value={`${pendingBills.length} pendente(s) • ${formatBRL(totalPending)}`}
           className="text-sm px-3 py-1"
+        />
+        <Button
+          label="Compra no Cartão"
+          icon="pi pi-credit-card"
+          size="small"
+          outlined
+          onClick={() =>
+            onOpenNewBill({
+              type: 'expense',
+              status: 'pending',
+              payment_method: 'credit_card'
+            })
+          }
         />
         <Button
           label="Nova Conta"
@@ -190,6 +242,143 @@ export default function BillsToPaySection({
 
   return (
     <Card className="mb-4 shadow-1 border-round-xl">
+      {/* PAINEL DE RESUMO DAS FATURAS DE CARTÃO DO MÊS */}
+      {cardInvoices.length > 0 && (
+        <div className="mb-4 pb-3 border-bottom-1 surface-border">
+          <div className="flex align-items-center justify-content-between mb-2">
+            <span className="text-sm font-bold flex align-items-center gap-2">
+              <i className="pi pi-credit-card text-primary" />
+              Faturas de Cartão de Crédito neste Mês
+            </span>
+            <span className="text-xs text-color-secondary">
+              Calculadas automaticamente pelo fechamento e vencimento de cada
+              cartão
+            </span>
+          </div>
+
+          <div className="grid">
+            {cardInvoices.map((inv) => (
+              <div
+                key={inv.card.id}
+                className="col-12 md:col-6 lg:col-4"
+              >
+                <div
+                  className="p-3 border-round-xl border-1 h-full flex flex-column justify-content-between"
+                  style={{
+                    borderColor: `${inv.card.color}66`,
+                    backgroundColor: `${inv.card.color}0D`
+                  }}
+                >
+                  <div>
+                    <div className="flex align-items-center justify-content-between gap-2 mb-2">
+                      <div className="flex align-items-center gap-2">
+                        <span
+                          className="inline-flex align-items-center justify-content-center border-round-lg text-white shadow-1"
+                          style={{
+                            width: '2.2rem',
+                            height: '2.2rem',
+                            backgroundColor: inv.card.color
+                          }}
+                        >
+                          <i className="pi pi-credit-card" />
+                        </span>
+                        <div>
+                          <span className="font-bold text-sm block">
+                            Fatura {inv.card.name}
+                          </span>
+                          <span className="text-xs text-color-secondary">
+                            Vencimento:{' '}
+                            <strong>{formatDateBR(inv.dueDateISO)}</strong>
+                          </span>
+                        </div>
+                      </div>
+
+                      <Tag
+                        value={inv.dueStatus.label}
+                        severity={inv.dueStatus.severity}
+                        icon={`pi ${inv.dueStatus.icon}`}
+                        className="text-xs"
+                      />
+                    </div>
+
+                    <div className="flex justify-content-between align-items-baseline my-2">
+                      <div>
+                        <span className="text-xs text-color-secondary block">
+                          A Pagar na Fatura
+                        </span>
+                        <span className="text-xl font-bold text-orange-500">
+                          {formatBRL(inv.pendingAmount)}
+                        </span>
+                      </div>
+                      <div className="text-right text-xs text-color-secondary">
+                        <span>Total no mês: {formatBRL(inv.totalAmount)}</span>
+                        <span className="block">
+                          {inv.pendingCount} pendente(s) de {inv.totalCount}{' '}
+                          compra(s)
+                        </span>
+                      </div>
+                    </div>
+
+                    {inv.limitUsagePercent !== null &&
+                      inv.card.credit_limit && (
+                        <div className="mb-3">
+                          <div className="flex justify-content-between text-xs text-color-secondary mb-1">
+                            <span>Uso do limite no mês</span>
+                            <span>
+                              {inv.limitUsagePercent}% de{' '}
+                              {formatBRL(inv.card.credit_limit)}
+                            </span>
+                          </div>
+                          <ProgressBar
+                            value={inv.limitUsagePercent}
+                            showValue={false}
+                            color={inv.card.color}
+                            style={{ height: '5px' }}
+                          />
+                        </div>
+                      )}
+                  </div>
+
+                  <div className="flex align-items-center justify-content-between gap-2 pt-2 border-top-1 surface-border">
+                    <Button
+                      label="+ Compra"
+                      icon="pi pi-plus"
+                      size="small"
+                      text
+                      onClick={() =>
+                        onOpenNewBill({
+                          type: 'expense',
+                          status: 'pending',
+                          payment_method: 'credit_card',
+                          card_id: inv.card.id
+                        })
+                      }
+                    />
+                    {inv.pendingCount > 0 ? (
+                      <Button
+                        label="Pagar Fatura Inteira"
+                        icon="pi pi-check-circle"
+                        severity="success"
+                        size="small"
+                        onClick={() =>
+                          onPayCardInvoice(inv.card.id, inv.card.name)
+                        }
+                      />
+                    ) : (
+                      <Tag
+                        value="Fatura Quitada"
+                        severity="success"
+                        icon="pi pi-check"
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <DataTable
         value={pendingBills}
         header={header}
@@ -201,14 +390,14 @@ export default function BillsToPaySection({
         rows={5}
       >
         <Column
-          header="Vencimento / Status"
+          header="Vencimento / Compra"
           body={dueStatusBodyTemplate}
-          style={{ minWidth: '175px' }}
+          style={{ minWidth: '185px' }}
         />
         <Column
-          header="Conta / Categoria"
+          header="Conta / Cartão / Categoria"
           body={descriptionBodyTemplate}
-          style={{ minWidth: '250px' }}
+          style={{ minWidth: '260px' }}
         />
         <Column
           header="Valor"

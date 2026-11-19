@@ -12,6 +12,7 @@ import { Button } from 'primereact/button';
 import {
   Category,
   PAYMENT_METHOD_LABELS,
+  PaymentCard,
   PaymentMethod,
   Transaction
 } from '@/types/finance';
@@ -30,6 +31,7 @@ export type TransactionTabFilter =
 interface TransactionListProps {
   transactions: Transaction[];
   categories: Category[];
+  cards: PaymentCard[];
   activeTab: TransactionTabFilter;
   onTabChange: (tab: TransactionTabFilter) => void;
   onToggleStatus: (tx: Transaction) => void;
@@ -37,7 +39,11 @@ interface TransactionListProps {
   onDeleteRequest: (tx: Transaction) => void;
 }
 
-const TAB_OPTIONS: { label: string; value: TransactionTabFilter; icon: string }[] = [
+const TAB_OPTIONS: {
+  label: string;
+  value: TransactionTabFilter;
+  icon: string;
+}[] = [
   { label: 'Todos', value: 'all', icon: 'pi pi-list' },
   { label: 'Entradas', value: 'income', icon: 'pi pi-arrow-up-right' },
   { label: 'Saídas Pagas', value: 'expense_paid', icon: 'pi pi-check-circle' },
@@ -47,6 +53,7 @@ const TAB_OPTIONS: { label: string; value: TransactionTabFilter; icon: string }[
 export default function TransactionList({
   transactions,
   categories,
+  cards,
   activeTab,
   onTabChange,
   onToggleStatus,
@@ -54,17 +61,26 @@ export default function TransactionList({
   onDeleteRequest
 }: TransactionListProps) {
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = React.useState<string | null>(
-    null
-  );
+  const [selectedCategoryId, setSelectedCategoryId] = React.useState<
+    string | null
+  >(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
     React.useState<PaymentMethod | null>(null);
+  const [selectedCardId, setSelectedCardId] = React.useState<string | null>(
+    null
+  );
 
   const categoryMap = React.useMemo(() => {
     const map = new Map<string, Category>();
     categories.forEach((c) => map.set(c.id, c));
     return map;
   }, [categories]);
+
+  const cardMap = React.useMemo(() => {
+    const map = new Map<string, PaymentCard>();
+    cards.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [cards]);
 
   const paymentOptions = React.useMemo(() => {
     return Object.entries(PAYMENT_METHOD_LABELS).map(([key, val]) => ({
@@ -98,15 +114,23 @@ export default function TransactionList({
         return false;
       }
 
+      if (selectedCardId && tx.card_id !== selectedCardId) {
+        return false;
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase();
         const catName = tx.category_id
           ? categoryMap.get(tx.category_id)?.name?.toLowerCase() || ''
           : '';
+        const cardName = tx.card_id
+          ? cardMap.get(tx.card_id)?.name?.toLowerCase() || ''
+          : '';
         const notes = tx.notes?.toLowerCase() || '';
         if (
           !tx.description.toLowerCase().includes(q) &&
           !catName.includes(q) &&
+          !cardName.includes(q) &&
           !notes.includes(q)
         ) {
           return false;
@@ -120,23 +144,35 @@ export default function TransactionList({
     activeTab,
     selectedCategoryId,
     selectedPaymentMethod,
+    selectedCardId,
     searchQuery,
-    categoryMap
+    categoryMap,
+    cardMap
   ]);
 
-  const dateBodyTemplate = (tx: Transaction) => (
-    <div className="flex flex-column">
-      <span className="font-semibold text-sm">
-        <i className="pi pi-calendar text-color-secondary mr-1 text-xs" />
-        {formatDateBR(tx.due_date)}
-      </span>
-      {tx.paid_at && tx.status === 'paid' && (
-        <span className="text-xs text-color-secondary">
-          Baixa: {formatDateBR(tx.paid_at)}
+  const dateBodyTemplate = (tx: Transaction) => {
+    const hasDifferentPurchaseDate =
+      tx.purchase_date && tx.purchase_date !== tx.due_date;
+
+    return (
+      <div className="flex flex-column">
+        <span className="font-semibold text-sm">
+          <i className="pi pi-calendar text-color-secondary mr-1 text-xs" />
+          {formatDateBR(tx.due_date)}
         </span>
-      )}
-    </div>
-  );
+        {hasDifferentPurchaseDate && (
+          <span className="text-xs text-color-secondary">
+            Compra: {formatDateBR(tx.purchase_date)}
+          </span>
+        )}
+        {tx.paid_at && tx.status === 'paid' && (
+          <span className="text-xs text-green-600">
+            Baixa: {formatDateBR(tx.paid_at)}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const descriptionBodyTemplate = (tx: Transaction) => (
     <div>
@@ -198,11 +234,26 @@ export default function TransactionList({
       return <span className="text-xs text-color-secondary">-</span>;
     }
     const meta = PAYMENT_METHOD_LABELS[tx.payment_method];
+    const txCard = tx.card_id ? cardMap.get(tx.card_id) : null;
+
     return (
-      <span className="text-xs font-medium flex align-items-center gap-1">
-        <i className={`pi ${meta.icon} text-color-secondary`} />
-        {meta.label}
-      </span>
+      <div className="flex flex-column gap-1">
+        <span className="text-xs font-medium flex align-items-center gap-1">
+          <i className={`pi ${meta.icon} text-color-secondary`} />
+          {meta.label}
+        </span>
+        {txCard && (
+          <div>
+            <span
+              className="inline-flex align-items-center gap-1 px-2 py-1 border-round text-xs font-semibold text-white"
+              style={{ backgroundColor: txCard.color }}
+            >
+              <i className="pi pi-credit-card text-xs" />
+              {txCard.name}
+            </span>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -294,7 +345,8 @@ export default function TransactionList({
           <div>
             <span className="text-lg font-bold">Lançamentos do Mês</span>
             <p className="m-0 text-xs text-color-secondary">
-              Extrato unificado de Entradas, Saídas Pagas e Contas a Pagar
+              Extrato unificado de Entradas, Saídas Pagas, Cartões e Contas a
+              Pagar
             </p>
           </div>
         </div>
@@ -315,18 +367,18 @@ export default function TransactionList({
       </div>
 
       <div className="grid">
-        <div className="col-12 md:col-5">
+        <div className="col-12 md:col-4">
           <span className="p-input-icon-left w-full">
             <i className="pi pi-search" />
             <InputText
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por descrição, categoria ou observação..."
+              placeholder="Buscar descrição, cartão ou nota..."
               className="w-full p-inputtext-sm"
             />
           </span>
         </div>
-        <div className="col-12 sm:col-6 md:col-4">
+        <div className="col-12 sm:col-4 md:col-3">
           <Dropdown
             value={selectedCategoryId}
             options={categories}
@@ -338,12 +390,24 @@ export default function TransactionList({
             className="w-full p-inputtext-sm"
           />
         </div>
-        <div className="col-12 sm:col-6 md:col-3">
+        <div className="col-12 sm:col-4 md:col-3">
           <Dropdown
             value={selectedPaymentMethod}
             options={paymentOptions}
             onChange={(e) => setSelectedPaymentMethod(e.value)}
             placeholder="Forma de Pagamento"
+            showClear
+            className="w-full p-inputtext-sm"
+          />
+        </div>
+        <div className="col-12 sm:col-4 md:col-2">
+          <Dropdown
+            value={selectedCardId}
+            options={cards}
+            optionLabel="name"
+            optionValue="id"
+            onChange={(e) => setSelectedCardId(e.value)}
+            placeholder="Cartão"
             showClear
             className="w-full p-inputtext-sm"
           />
@@ -369,10 +433,10 @@ export default function TransactionList({
       >
         <Column
           field="due_date"
-          header="Vencimento / Data"
+          header="Vencimento / Compra"
           body={dateBodyTemplate}
           sortable
-          style={{ minWidth: '140px' }}
+          style={{ minWidth: '150px' }}
         />
         <Column
           field="description"
@@ -385,13 +449,13 @@ export default function TransactionList({
           field="category_id"
           header="Categoria"
           body={categoryBodyTemplate}
-          style={{ minWidth: '180px' }}
+          style={{ minWidth: '170px' }}
         />
         <Column
           field="payment_method"
-          header="Meio"
+          header="Meio / Cartão"
           body={paymentBodyTemplate}
-          style={{ minWidth: '140px' }}
+          style={{ minWidth: '160px' }}
         />
         <Column
           field="status"

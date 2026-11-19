@@ -13,16 +13,21 @@ import TransactionList, {
 } from '@/components/TransactionList';
 import TransactionModal from '@/components/TransactionModal';
 import CategoryModal from '@/components/CategoryModal';
+import CardModal from '@/components/CardModal';
 import AuthModal from '@/components/AuthModal';
 import {
   Category,
   CreateTransactionInput,
+  DEFAULT_CARDS,
   DEFAULT_CATEGORIES,
+  PaymentCard,
   Transaction
 } from '@/types/finance';
 import {
   calculateMonthlySummary,
   formatBRL,
+  formatCompetenceMonthBR,
+  formatDateBR,
   getCompetenceMonth
 } from '@/lib/finance-calculations';
 import { setupPrimeReactLocale } from '@/lib/primereact-locale';
@@ -39,6 +44,7 @@ export default function HomePage() {
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
   const [categories, setCategories] =
     React.useState<Category[]>(DEFAULT_CATEGORIES);
+  const [cards, setCards] = React.useState<PaymentCard[]>(DEFAULT_CARDS);
   const [activeTab, setActiveTab] =
     React.useState<TransactionTabFilter>('all');
   const [darkMode, setDarkMode] = React.useState<boolean>(false);
@@ -54,6 +60,7 @@ export default function HomePage() {
     Partial<CreateTransactionInput> | undefined
   >(undefined);
   const [catModalVisible, setCatModalVisible] = React.useState(false);
+  const [cardModalVisible, setCardModalVisible] = React.useState(false);
   const [authModalVisible, setAuthModalVisible] = React.useState(false);
   const [deletingTx, setDeletingTx] = React.useState<Transaction | null>(null);
 
@@ -73,14 +80,16 @@ export default function HomePage() {
 
   const loadData = React.useCallback(async () => {
     try {
-      const [statusInfo, cats, txs] = await Promise.all([
+      const [statusInfo, cats, loadedCards, txs] = await Promise.all([
         financeRepository.getActiveStorageMode(),
         financeRepository.listCategories(),
+        financeRepository.listCards(),
         financeRepository.listTransactionsByMonth(competenceMonth)
       ]);
       setStorageMode(statusInfo.mode);
       setUserEmail(statusInfo.userEmail);
       setCategories(cats);
+      setCards(loadedCards);
       setTransactions(txs);
     } catch (err) {
       toastRef.current?.show({
@@ -127,25 +136,43 @@ export default function HomePage() {
     setTxModalVisible(true);
   };
 
-  const handleSaveCreate = async (input: CreateTransactionInput) => {
-    const created = await financeRepository.createTransactions(input);
+  const handleSaveCreate = async (
+    input: CreateTransactionInput,
+    firstInvoiceMonth?: string
+  ) => {
+    const created = await financeRepository.createTransactions(input, cards);
     await loadData();
-    toastRef.current?.show({
-      severity: 'success',
-      summary: 'Lançamento Registrado',
-      detail:
-        created.length > 1
-          ? `${created.length} lançamentos gerados com sucesso!`
-          : `"${input.description}" (${formatBRL(input.amount)}) adicionado!`,
-      life: 3000
-    });
+
+    const firstTx = created[0];
+    if (
+      firstInvoiceMonth &&
+      firstInvoiceMonth !== competenceMonth &&
+      firstTx
+    ) {
+      toastRef.current?.show({
+        severity: 'info',
+        summary: `Alocado na Fatura de ${formatCompetenceMonthBR(firstInvoiceMonth)}`,
+        detail: `Pelo vencimento do cartão, você pagará "${input.description}" em ${formatDateBR(firstTx.due_date)}.`,
+        life: 4800
+      });
+    } else {
+      toastRef.current?.show({
+        severity: 'success',
+        summary: 'Lançamento Registrado',
+        detail:
+          created.length > 1
+            ? `${created.length} lançamentos gerados com sucesso!`
+            : `"${input.description}" (${formatBRL(input.amount)}) adicionado!`,
+        life: 3200
+      });
+    }
   };
 
   const handleSaveUpdate = async (
     id: string,
     updates: Partial<Transaction>
   ) => {
-    await financeRepository.updateTransaction(id, updates);
+    await financeRepository.updateTransaction(id, updates, cards);
     await loadData();
     toastRef.current?.show({
       severity: 'info',
@@ -169,6 +196,22 @@ export default function HomePage() {
         : 'Status Revertido para Pendente',
       detail: `${tx.description} (${formatBRL(tx.amount)})`,
       life: 2800
+    });
+  };
+
+  const handlePayCardInvoice = async (cardId: string, cardName: string) => {
+    const paidCount = await financeRepository.payCardInvoice(
+      cardId,
+      competenceMonth
+    );
+    await loadData();
+    toastRef.current?.show({
+      severity: 'success',
+      summary: `Fatura ${cardName} Quitada!`,
+      detail: `${paidCount} compra(s) da fatura de ${formatCompetenceMonthBR(
+        competenceMonth
+      )} marcada(s) como paga(s).`,
+      life: 3500
     });
   };
 
@@ -212,6 +255,44 @@ export default function HomePage() {
     });
   };
 
+  const handleCreateCard = async (
+    card: Omit<PaymentCard, 'id' | 'created_at' | 'user_id'>
+  ) => {
+    await financeRepository.createCard(card);
+    await loadData();
+    toastRef.current?.show({
+      severity: 'success',
+      summary: 'Cartão Cadastrado',
+      detail: `O cartão "${card.name}" foi adicionado com sucesso.`,
+      life: 2800
+    });
+  };
+
+  const handleUpdateCard = async (
+    cardId: string,
+    updates: Partial<Omit<PaymentCard, 'id' | 'created_at' | 'user_id'>>
+  ) => {
+    await financeRepository.updateCard(cardId, updates);
+    await loadData();
+    toastRef.current?.show({
+      severity: 'info',
+      summary: 'Cartão Atualizado',
+      detail: 'As configurações do cartão foram salvas.',
+      life: 2500
+    });
+  };
+
+  const handleDeleteCard = async (cardId: string) => {
+    await financeRepository.deleteCard(cardId);
+    await loadData();
+    toastRef.current?.show({
+      severity: 'warn',
+      summary: 'Cartão Removido',
+      detail: 'O cartão foi excluído.',
+      life: 2500
+    });
+  };
+
   const defaultModalDate = React.useMemo(() => {
     const now = new Date();
     if (
@@ -232,6 +313,7 @@ export default function HomePage() {
           selectedMonthDate={selectedMonthDate}
           onMonthChange={setSelectedMonthDate}
           onOpenNewTransaction={handleOpenNewTransaction}
+          onOpenCards={() => setCardModalVisible(true)}
           onOpenCategories={() => setCatModalVisible(true)}
           onOpenCloudModal={() => setAuthModalVisible(true)}
           darkMode={darkMode}
@@ -248,7 +330,10 @@ export default function HomePage() {
         <BillsToPaySection
           transactions={transactions}
           categories={categories}
+          cards={cards}
+          competenceMonth={competenceMonth}
           onTogglePaid={handleToggleStatus}
+          onPayCardInvoice={handlePayCardInvoice}
           onEdit={handleOpenEditTransaction}
           onOpenNewBill={handleOpenNewTransaction}
         />
@@ -263,6 +348,7 @@ export default function HomePage() {
         <TransactionList
           transactions={transactions}
           categories={categories}
+          cards={cards}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onToggleStatus={handleToggleStatus}
@@ -276,11 +362,23 @@ export default function HomePage() {
         visible={txModalVisible}
         onHide={() => setTxModalVisible(false)}
         categories={categories}
+        cards={cards}
         editingTransaction={editingTx}
         initialPreset={txPreset}
         defaultDate={defaultModalDate}
+        onOpenManageCards={() => setCardModalVisible(true)}
         onSaveCreate={handleSaveCreate}
         onSaveUpdate={handleSaveUpdate}
+      />
+
+      {/* Modal de Meus Cartões */}
+      <CardModal
+        visible={cardModalVisible}
+        onHide={() => setCardModalVisible(false)}
+        cards={cards}
+        onCreateCard={handleCreateCard}
+        onUpdateCard={handleUpdateCard}
+        onDeleteCard={handleDeleteCard}
       />
 
       {/* Modal de Categorias */}

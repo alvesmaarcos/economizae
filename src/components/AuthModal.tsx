@@ -83,10 +83,12 @@ export default function AuthModal({
       'economizae_transactions_v1'
     );
     const categories = window.localStorage.getItem('economizae_categories_v1');
+    const cards = window.localStorage.getItem('economizae_cards_v1');
     const payload = {
       exportedAt: new Date().toISOString(),
       transactions: transactions ? JSON.parse(transactions) : [],
-      categories: categories ? JSON.parse(categories) : []
+      categories: categories ? JSON.parse(categories) : [],
+      cards: cards ? JSON.parse(cards) : []
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: 'application/json'

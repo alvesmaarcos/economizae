@@ -12,6 +12,7 @@ interface HeaderProps {
   selectedMonthDate: Date;
   onMonthChange: (newDate: Date) => void;
   onOpenNewTransaction: (preset?: Partial<CreateTransactionInput>) => void;
+  onOpenCards: () => void;
   onOpenCategories: () => void;
   onOpenCloudModal: () => void;
   darkMode: boolean;
@@ -24,6 +25,7 @@ export default function Header({
   selectedMonthDate,
   onMonthChange,
   onOpenNewTransaction,
+  onOpenCards,
   onOpenCategories,
   onOpenCloudModal,
   darkMode,
@@ -87,7 +89,7 @@ export default function Header({
         <p className="m-0 text-xs text-color-secondary">
           {userEmail
             ? `Conectado como ${userEmail}`
-            : 'Controle de Entradas, Saídas e Contas a Pagar'}
+            : 'Controle de Entradas, Saídas, Cartões e Contas a Pagar'}
         </p>
       </div>
     </div>
@@ -151,6 +153,13 @@ export default function Header({
 
   const endContent = (
     <div className="flex align-items-center flex-wrap gap-2">
+      <Button
+        icon="pi pi-credit-card"
+        label="Meus Cartões"
+        outlined
+        size="small"
+        onClick={onOpenCards}
+      />
       <Button
         icon="pi pi-tags"
         label="Categorias"
