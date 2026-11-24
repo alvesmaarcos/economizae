@@ -1,19 +1,24 @@
 'use client';
 
 import React from 'react';
+import { Button } from 'primereact/button';
 import { Card } from 'primereact/card';
 import { ProgressBar } from 'primereact/progressbar';
 import { Tag } from 'primereact/tag';
 import { MonthlySummary } from '@/types/finance';
-import { formatBRL } from '@/lib/finance-calculations';
+import { formatBRL, formatDateBR } from '@/lib/finance-calculations';
 
 interface SummaryCardsProps {
   summary: MonthlySummary;
+  balanceDate: string | null;
+  onEditBalance: () => void;
   onFilterSelect: (filter: 'all' | 'income' | 'expense_paid' | 'bills_to_pay') => void;
 }
 
 export default function SummaryCards({
   summary,
+  balanceDate,
+  onEditBalance,
   onFilterSelect
 }: SummaryCardsProps) {
   const incomeProgress =
@@ -203,20 +208,19 @@ export default function SummaryCards({
       {/* 4. SALDO DO MÊS (ATUAL EM CAIXA + PREVISTO) */}
       <div className="col-12 md:col-6 xl:col-3">
         <Card
-          className="h-full shadow-1 border-round-xl cursor-pointer hover:surface-hover transition-duration-150 summary-card-balance"
-          onClick={() => onFilterSelect('all')}
+          className="h-full shadow-1 border-round-xl summary-card-balance"
         >
           <div className="flex justify-content-between align-items-start mb-2">
             <div>
               <span className="block text-sm font-medium text-color-secondary mb-1">
-                Saldo Atual em Caixa
+                Saldo Real em Caixa
               </span>
               <div
                 className={`text-2xl font-bold ${
                   summary.currentBalance >= 0 ? 'text-green-500' : 'text-red-500'
                 }`}
               >
-                {formatBRL(summary.currentBalance)}
+                {balanceDate ? formatBRL(summary.currentBalance) : '—'}
               </div>
             </div>
             <div
@@ -235,6 +239,20 @@ export default function SummaryCards({
             </div>
           </div>
 
+          <div className="flex flex-wrap align-items-center justify-content-between gap-1">
+            {balanceDate && (
+              <span className="text-xs text-color-secondary">Até {formatDateBR(balanceDate)}</span>
+            )}
+            <Button
+              type="button"
+              label="Editar saldo real"
+              icon="pi pi-pencil"
+              text
+              size="small"
+              onClick={onEditBalance}
+            />
+          </div>
+
           <div className="surface-ground p-2 border-round-lg border-1 surface-border mt-2">
             <div className="flex justify-content-between align-items-center text-xs">
               <span className="text-color-secondary">
@@ -246,7 +264,7 @@ export default function SummaryCards({
                   summary.projectedBalance >= 0 ? 'text-green-500' : 'text-red-500'
                 }
               >
-                {formatBRL(summary.projectedBalance)}
+                {balanceDate ? formatBRL(summary.projectedBalance) : '—'}
               </strong>
             </div>
           </div>

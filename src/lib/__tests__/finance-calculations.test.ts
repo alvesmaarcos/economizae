@@ -6,9 +6,11 @@ import {
   calculateCreditCardFirstDueDate,
   calculateMonthlySummary,
   generateRecurringTransactions,
+  getBalanceReferenceDate,
   getDueStatus
 } from '../finance-calculations';
 import {
+  CreateTransactionInput,
   DEFAULT_CARDS,
   DEFAULT_CATEGORIES,
   PaymentCard,
@@ -123,6 +125,12 @@ describe('finance-calculations', () => {
 
     expect(summary.currentBalance).toBe(4300);
     expect(summary.projectedBalance).toBe(5400);
+
+    const accumulated = calculateMonthlySummary(sampleTransactions, today, -500);
+    expect(accumulated.currentBalance).toBe(-500);
+    expect(accumulated.projectedBalance).toBe(600);
+    expect(accumulated.incomeTotal).toBe(summary.incomeTotal);
+    expect(accumulated.expenseTotal).toBe(summary.expenseTotal);
   });
 
   it('calcula a data de vencimento da fatura do cartão de crédito a partir da data da compra, fechamento e vencimento', () => {
@@ -298,5 +306,78 @@ describe('finance-calculations', () => {
     );
     expect(breakdown[0].percentage).toBe(100);
     expect(addMonthsToISODate('2024-01-31', 1)).toBe('2024-02-29');
+  });
+});
+
+describe('saldo acumulado', () => {
+  it('usa o encerramento de meses passados, inclusive na virada do ano e em ano bissexto', () => {
+    expect(getBalanceReferenceDate('2026-12', '2027-01-05')).toBe('2026-12-31');
+    expect(getBalanceReferenceDate('2024-02', '2024-03-05')).toBe('2024-02-29');
+  });
+
+  it('usa hoje como limite no mês atual e em meses futuros', () => {
+    expect(getBalanceReferenceDate('2027-01', '2027-01-05')).toBe('2027-01-05');
+    expect(getBalanceReferenceDate('2027-02', '2027-01-05')).toBe('2027-01-05');
+    expect(calculateMonthlySummary([], '2027-01-05', -20).projectedBalance).toBe(-20);
+  });
+});
+
+describe('parcelas pagas antes do cadastro', () => {
+  const purchase: CreateTransactionInput = {
+    description: 'Compra parcelada',
+    amount: 120,
+    type: 'expense',
+    status: 'pending',
+    purchase_date: '2025-12-16',
+    due_date: '2025-12-16',
+    category_id: null,
+    payment_method: 'credit_card',
+    recurrence_type: 'installment',
+    installment_total: 12
+  };
+  const card: PaymentCard = {
+    id: 'test-card',
+    name: 'Cartão de teste',
+    color: '#000000',
+    modality: 'credit',
+    closing_day: 15,
+    due_day: 10,
+    credit_limit: null
+  };
+
+  it.each([0, 5, 12])('gera as 12 parcelas com %i pagas', (paidCount) => {
+    const installments = generateRecurringTransactions(
+      { ...purchase, paid_installments: paidCount },
+      () => 'test-id',
+      card,
+      '2027-02-28'
+    );
+
+    expect(installments).toHaveLength(12);
+    expect(installments.filter((item) => item.status === 'paid')).toHaveLength(paidCount);
+    expect(installments.map((item) => item.installment_current)).toEqual(
+      Array.from({ length: 12 }, (_, index) => index + 1)
+    );
+    expect(installments[0].due_date).toBe('2026-02-10');
+    expect(installments[4].paid_at).toBe(paidCount >= 5 ? '2026-06-10' : null);
+    expect(installments[5].paid_at).toBe(paidCount >= 6 ? '2026-07-10' : null);
+  });
+
+  it.each([-1, 1.5, 13])('rejeita a contagem inválida %i', (paidCount) => {
+    expect(() => generateRecurringTransactions(
+      { ...purchase, paid_installments: paidCount },
+      () => 'test-id',
+      card,
+      '2027-02-28'
+    )).toThrow('quantidade válida');
+  });
+
+  it('rejeita a marcação como paga quando o vencimento está no futuro', () => {
+    expect(() => generateRecurringTransactions(
+      { ...purchase, paid_installments: 5 },
+      () => 'test-id',
+      card,
+      '2026-06-09'
+    )).toThrow('vencimento até hoje');
   });
 });

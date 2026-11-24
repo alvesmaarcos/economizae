@@ -228,17 +228,34 @@ export function getDueStatus(
   };
 }
 
+export function getBalanceToday(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const datePart = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
+  return `${datePart('year')}-${datePart('month')}-${datePart('day')}`;
+}
+
+export function getBalanceReferenceDate(
+  competenceMonth: string,
+  todayISO: string = getBalanceToday()
+): string {
+  const [year, month] = competenceMonth.split('-').map(Number);
+  const monthEnd = buildSafeISODate(year, month - 1, 31);
+  return monthEnd < todayISO ? monthEnd : todayISO;
+}
+
 /**
- * Calcula todos os indicadores financeiros do mês selecionado:
- * - Entradas no mês (Total, Recebidas e A Receber)
- * - Saídas Pagas
- * - Contas a Pagar (Saídas Pendentes + Vencidas + Vencendo Hoje/Em Breve)
- * - Saldo Atual em Caixa (Entradas Recebidas - Saídas Pagas)
- * - Saldo Previsto do Mês (Total Entradas - Total Saídas [Pagas + Contas a Pagar])
+ * Resume os lançamentos por competência e usa o saldo real acumulado, quando informado.
  */
 export function calculateMonthlySummary(
   transactions: Transaction[],
-  todayISO: string = toISODateString(new Date())
+  todayISO: string = toISODateString(new Date()),
+  realCashBalance?: number
 ): MonthlySummary {
   let incomeReceived = 0;
   let incomePending = 0;
@@ -289,8 +306,8 @@ export function calculateMonthlySummary(
 
   const incomeTotal = round2(incomeReceived + incomePending);
   const expenseTotal = round2(expensePaid + billsToPayTotal);
-  const currentBalance = round2(incomeReceived - expensePaid);
-  const projectedBalance = round2(incomeTotal - expenseTotal);
+  const currentBalance = round2(realCashBalance ?? (incomeReceived - expensePaid));
+  const projectedBalance = round2(currentBalance + incomePending - billsToPayTotal);
 
   return {
     incomeTotal,
@@ -320,7 +337,8 @@ export function calculateMonthlySummary(
 export function generateRecurringTransactions(
   input: CreateTransactionInput,
   idGenerator: () => string = () => crypto.randomUUID(),
-  selectedCard?: PaymentCard | null
+  selectedCard?: PaymentCard | null,
+  todayISO: string = toISODateString(new Date())
 ): Omit<Transaction, 'created_at'>[] {
   const rawPurchaseDate = input.purchase_date || input.due_date;
   let baseDueDate = input.due_date;
@@ -379,11 +397,23 @@ export function generateRecurringTransactions(
       2,
       Math.min(60, Number(input.installment_total) || 2)
     );
+    const paidCount = input.paid_installments ?? (input.status === 'paid' ? 1 : 0);
+    if (!Number.isInteger(paidCount) || paidCount < 0 || paidCount > totalInstallments) {
+      throw new Error('Informe uma quantidade válida de parcelas já pagas.');
+    }
+    if (
+      input.paid_installments !== undefined &&
+      paidCount > 0 &&
+      addMonthsToISODate(baseDueDate, paidCount - 1) > todayISO
+    ) {
+      throw new Error('As parcelas já pagas devem ter vencimento até hoje.');
+    }
+
     const items: Omit<Transaction, 'created_at'>[] = [];
 
     for (let i = 0; i < totalInstallments; i++) {
       const targetDueDate = addMonthsToISODate(baseDueDate, i);
-      const installmentStatus = i === 0 ? input.status : 'pending';
+      const installmentStatus = i < paidCount ? 'paid' : 'pending';
 
       items.push({
         id: idGenerator(),
@@ -395,7 +425,7 @@ export function generateRecurringTransactions(
         due_date: targetDueDate,
         paid_at:
           installmentStatus === 'paid'
-            ? input.paid_at || targetDueDate
+            ? (input.paid_installments === undefined ? input.paid_at : null) || targetDueDate
             : null,
         competence_month: getCompetenceMonthFromDate(targetDueDate),
         category_id: input.category_id,

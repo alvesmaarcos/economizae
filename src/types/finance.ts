@@ -87,6 +87,7 @@ export interface CreateTransactionInput {
   card_id?: string | null;
   recurrence_type: RecurrenceType;
   installment_total?: number | null;
+  paid_installments?: number;
   fixed_months?: number; // padrão 12 meses quando 'fixed'
   notes?: string | null;
 }
@@ -145,9 +146,9 @@ export interface MonthlySummary {
   /** Contas a pagar que vencem nos próximos 3 dias */
   dueSoonCount: number;
   dueSoonAmount: number;
-  /** Saldo Atual em Caixa = Entradas Recebidas - Saídas Pagas */
+  /** Saldo real acumulado até a data de referência */
   currentBalance: number;
-  /** Saldo Previsto do Mês = Total Entradas - Total Saídas (Pagas + Contas a Pagar) */
+  /** Saldo real acrescido das entradas pendentes e descontadas as saídas pendentes */
   projectedBalance: number;
 }
 
