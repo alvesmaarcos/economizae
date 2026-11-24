@@ -65,4 +65,6 @@ Se o bot ficar em silêncio, consulte o endereço registrado e o último erro de
 node --env-file=.env.local scripts/set-telegram-webhook.mjs --status
 ```
 
+Se o webhook registrar HTTP 503 em uma instalação que usou a versão inicial da migração, reaplique [supabase/telegram.sql](./supabase/telegram.sql) para conceder as permissões explícitas de leitura de cartões e gravação de despesas ao servidor.
+
 Para vincular, gere um link no painel e toque **Iniciar** no Telegram. O link envia o código de vínculo junto com `/start` e vale por 10 minutos. Digitar `/start` sozinho abre a conversa sem enviar esse código.

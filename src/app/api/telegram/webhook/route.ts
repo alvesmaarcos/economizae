@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { prepareExpense, readExpenseExtraction, saoPauloDate } from '@/lib/telegram-expense';
+import type { PaymentCard } from '@/types/finance';
 import {
   createTelegramDatabase, extractExpense, hashTelegramCode, telegramIsConfigured,
-  telegramRequest, webhookIsAuthentic
+  telegramRequest, TelegramRequestError, webhookIsAuthentic
 } from '@/server/telegram-services';
 
 export const runtime = 'nodejs';
@@ -30,6 +31,20 @@ type Draft = {
 const messageHelp = 'Envie uma despesa como “-25 corte de cabelo” ou “R$ 120 por parcela, geladeira, parcela 3 de 10 no Nubank, vence em 10/12 e ainda não paguei”. Você verá um resumo antes de confirmar.';
 const linkHelp = 'Entre no Economizaê e use Telegram → Vincular Telegram para conectar este chat à sua conta.';
 
+class TelegramDatabaseError extends Error {
+  readonly code: string | undefined;
+
+  constructor(readonly stage: string, error: { code: string }) {
+    super('Telegram database operation failed');
+    this.code = /^[A-Z0-9]{5,10}$/.test(error.code) ? error.code : undefined;
+  }
+}
+
+function isPrivateSender(message: TelegramMessage): boolean {
+  return message.chat?.type === 'private' && !message.from?.is_bot
+    && message.from?.id === message.chat.id && Number.isSafeInteger(message.chat.id);
+}
+
 function sendMessage(chatId: number, text: string, replyMarkup?: object) {
   return telegramRequest<{ message_id: number }>('sendMessage', {
     chat_id: chatId, text, reply_markup: replyMarkup
@@ -50,7 +65,7 @@ async function handleCallback(db: Database, callback: TelegramCallback) {
   const { data, error } = await db.rpc('resolve_telegram_draft', {
     draft: draftId, sender: callback.from.id, should_confirm: decision === 'confirm'
   });
-  if (error) throw new Error('Could not resolve Telegram draft');
+  if (error) throw new TelegramDatabaseError('resolve_draft', error);
   const result = data as { status: string; count?: number };
   const notice = result.status === 'confirmed'
     ? result.count === 1 ? 'Despesa registrada.' : `${result.count} parcelas registradas.`
@@ -79,18 +94,17 @@ async function deliverDraft(db: Database, chatId: number, draft: Draft) {
     notified_at: new Date().toISOString(),
     prompt_message_id: draft.status === 'clarify' ? sent.message_id : null
   }).eq('id', draft.id).eq('status', draft.status).is('notified_at', null);
-  if (error) throw new Error('Could not mark Telegram draft as delivered');
+  if (error) throw new TelegramDatabaseError('mark_draft_delivered', error);
 }
 
 async function handleMessage(db: Database, message: TelegramMessage) {
-  if (message.chat?.type !== 'private' || message.from?.is_bot || message.from?.id !== message.chat.id
-    || !Number.isSafeInteger(message.chat.id) || !Number.isSafeInteger(message.message_id)
+  if (!isPrivateSender(message) || !Number.isSafeInteger(message.message_id)
     || !Number.isSafeInteger(message.date) || message.date * 1000 < Date.now() - 86_400_000) return;
   const chatId = message.chat.id;
   const text = typeof message.text === 'string' ? message.text.trim() : '';
   const { data: link, error: linkError } = await db.from('telegram_links')
     .select('id, user_id, linked_at').eq('chat_id', chatId).maybeSingle();
-  if (linkError) throw new Error('Could not look up Telegram link');
+  if (linkError) throw new TelegramDatabaseError('load_link', linkError);
 
   if (/^\/start(?:\s|$)/.test(text)) {
     if (link) {
@@ -102,7 +116,7 @@ async function handleMessage(db: Database, message: TelegramMessage) {
       const { data: linked, error } = await db.rpc('redeem_telegram_link', {
         hashed_code: hashTelegramCode(code), sender: chatId
       });
-      if (error) throw new Error('Could not redeem Telegram link');
+      if (error) throw new TelegramDatabaseError('redeem_link', error);
       if (linked) {
         await sendMessage(chatId, `Telegram vinculado ao Economizaê. ${messageHelp}`);
         return;
@@ -129,7 +143,7 @@ async function handleMessage(db: Database, message: TelegramMessage) {
   const drafts = () => db.from('telegram_drafts').select('id, status, summary, expires_at, notified_at')
     .eq('link_id', link.id).eq('message_id', message.message_id).maybeSingle<Draft>();
   const { data: existingDraft, error: existingError } = await drafts();
-  if (existingError) throw new Error('Could not look up Telegram draft');
+  if (existingError) throw new TelegramDatabaseError('load_draft', existingError);
   if (existingDraft) {
     await deliverDraft(db, chatId, existingDraft);
     return;
@@ -137,13 +151,13 @@ async function handleMessage(db: Database, message: TelegramMessage) {
 
   const { error: cleanupError } = await db.from('telegram_drafts').delete().eq('link_id', link.id)
     .lt('created_at', new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
-  if (cleanupError) throw new Error('Could not clean up Telegram drafts');
+  if (cleanupError) console.warn('Telegram draft cleanup failed');
   const replyId = message.reply_to_message?.message_id;
   let previous;
   if (Number.isSafeInteger(replyId)) {
     const { data: prompt, error } = await db.from('telegram_drafts').select('input, summary, expires_at')
       .eq('link_id', link.id).eq('status', 'clarify').eq('prompt_message_id', replyId).maybeSingle();
-    if (error) throw new Error('Could not look up Telegram clarification');
+    if (error) throw new TelegramDatabaseError('load_clarification', error);
     if (prompt && Date.parse(prompt.expires_at) <= Date.now()) {
       await sendMessage(chatId, 'Esse pedido de esclarecimento expirou. Envie a despesa novamente com todos os dados.');
       return;
@@ -161,9 +175,13 @@ async function handleMessage(db: Database, message: TelegramMessage) {
     await sendMessage(chatId, 'O Gemini não conseguiu interpretar a mensagem agora. Tente enviar novamente em instantes.');
     return;
   }
-  const { data: cards, error: cardsError } = await db.from('cards')
-    .select('id, name, modality, color, closing_day, due_day, credit_limit').eq('user_id', link.user_id);
-  if (cardsError) throw new Error('Could not load account cards');
+  let cards: PaymentCard[] = [];
+  if (extracted.card_name?.trim()) {
+    const { data, error } = await db.from('cards')
+      .select('id, name, modality, color, closing_day, due_day, credit_limit').eq('user_id', link.user_id);
+    if (error) throw new TelegramDatabaseError('load_cards', error);
+    cards = data;
+  }
   const draft = prepareExpense(extracted, cards, today);
   const { error: insertError } = await db.from('telegram_drafts').upsert({
     link_id: link.id, message_id: message.message_id, status: draft.status, summary: draft.summary,
@@ -171,9 +189,9 @@ async function handleMessage(db: Database, message: TelegramMessage) {
     transactions: draft.status === 'ready' ? draft.transactions : null
   }, { onConflict: 'link_id,message_id', ignoreDuplicates: true });
   if (insertError?.code === '23503') return; // The account revoked this link while Gemini was processing.
-  if (insertError) throw new Error('Could not save Telegram draft');
+  if (insertError) throw new TelegramDatabaseError('save_draft', insertError);
   const { data: savedDraft, error: readError } = await drafts();
-  if (readError) throw new Error('Could not read saved Telegram draft');
+  if (readError) throw new TelegramDatabaseError('reload_draft', readError);
   if (savedDraft) await deliverDraft(db, chatId, savedDraft);
 }
 
@@ -193,8 +211,21 @@ export async function POST(request: Request) {
     if (update.callback_query) await handleCallback(db, update.callback_query);
     else if (update.message) await handleMessage(db, update.message);
     return NextResponse.json({ ok: true });
-  } catch {
-    console.error('Telegram webhook processing failed');
+  } catch (error) {
+    if (error instanceof TelegramDatabaseError) {
+      console.error('Telegram database operation failed', { stage: error.stage, code: error.code });
+      const message = update.message;
+      if (message && isPrivateSender(message) && error.stage !== 'mark_draft_delivered') {
+        const sent = await sendMessage(message.chat.id,
+          'Não consegui acessar os dados do Economizaê agora. Tente enviar a mensagem novamente em instantes.'
+        ).catch(() => null);
+        if (sent) return NextResponse.json({ ok: true });
+      }
+    } else if (error instanceof TelegramRequestError) {
+      console.error('Telegram Bot API request failed', { method: error.method, status: error.status });
+    } else {
+      console.error('Telegram webhook processing failed');
+    }
     return new Response(null, { status: 503 });
   }
 }

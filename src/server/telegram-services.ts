@@ -29,6 +29,12 @@ export function createTelegramDatabase() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
+export class TelegramRequestError extends Error {
+  constructor(readonly method: string, readonly status?: number) {
+    super('Telegram Bot API request failed');
+  }
+}
+
 export async function telegramRequest<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) throw new Error('Telegram unavailable');
@@ -37,9 +43,10 @@ export async function telegramRequest<T>(method: string, params: Record<string, 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
     signal: AbortSignal.timeout(5000)
-  });
-  const body = await response.json() as { ok?: boolean; result?: T };
-  if (!response.ok || !body.ok || body.result === undefined) throw new Error(`Telegram ${method} failed`);
+  }).catch(() => null);
+  if (!response) throw new TelegramRequestError(method);
+  const body = await response.json().catch(() => null) as { ok?: boolean; result?: T } | null;
+  if (!response.ok || !body?.ok || body.result === undefined) throw new TelegramRequestError(method, response.status);
   return body.result;
 }
 

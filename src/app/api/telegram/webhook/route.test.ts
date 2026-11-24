@@ -25,6 +25,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -54,6 +55,24 @@ describe('Telegram webhook', () => {
     expect(requests.some(([url]) => String(url).includes('/transactions'))).toBe(false);
   });
 
+  it('reports database errors in the chat and logs only the step and safe error code', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const fetch = vi.fn(async (resource: string | URL | Request) => {
+      const url = new URL(String(resource));
+      if (url.pathname.endsWith('/telegram_links')) {
+        return Response.json({ code: '42501', message: 'private database details' }, { status: 403 });
+      }
+      if (url.pathname.endsWith('/sendMessage')) return Response.json({ ok: true, result: { message_id: 30 } });
+      throw new Error('Unexpected request');
+    });
+    vi.stubGlobal('fetch', fetch);
+    expect((await post(message(), secret)).status).toBe(200);
+    expect(errorLog.mock.calls).toEqual([
+      ['Telegram database operation failed', { stage: 'load_link', code: '42501' }]
+    ]);
+    expect(fetch.mock.calls.some(([url]) => String(url).endsWith('/sendMessage'))).toBe(true);
+  });
+
   it('stores a draft and sends its buttons once for a repeated message, then resolves only on callback', async () => {
     let saved: Record<string, unknown> | undefined;
     let confirmed = false;
@@ -72,11 +91,10 @@ describe('Telegram webhook', () => {
         }
         return Response.json(method !== 'DELETE' && saved ? [saved] : []);
       }
-      if (url.pathname.endsWith('/cards')) return Response.json([]);
       if (url.hostname === 'generativelanguage.googleapis.com') {
         return Response.json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify({
           intent: 'expense', description: 'corte de cabelo', amount_cents: 2500, amount_kind: null, status: 'paid',
-          method: null, card_name: null, purchase_date: null, due_date: null, paid_date: null,
+          method: 'pix', card_name: null, purchase_date: null, due_date: null, paid_date: null,
           current: null, total: null, remaining: null, remaining_includes_current: null, question: null
         }) }] } }] });
       }
@@ -92,7 +110,8 @@ describe('Telegram webhook', () => {
     expect((await post(message(), secret)).status).toBe(200);
     expect((await post(message(), secret)).status).toBe(200);
     expect(confirmed).toBe(false);
-    expect(saved).toMatchObject({ status: 'ready', transactions: [{ amount: 25, status: 'paid' }] });
+    expect(saved).toMatchObject({ status: 'ready', transactions: [{ amount: 25, status: 'paid', payment_method: 'pix' }] });
+    expect(fetch.mock.calls.some(([url]) => String(url).endsWith('/cards'))).toBe(false);
     const replies = fetch.mock.calls.filter(([url]) => String(url).endsWith('/sendMessage'));
     expect(replies).toHaveLength(1);
     expect(JSON.parse(String(replies[0][1]?.body)).reply_markup.inline_keyboard[0]).toEqual([
