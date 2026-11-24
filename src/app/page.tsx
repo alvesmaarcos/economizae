@@ -18,6 +18,7 @@ import TransactionModal from '@/components/TransactionModal';
 import CategoryModal from '@/components/CategoryModal';
 import CardModal from '@/components/CardModal';
 import AuthScreen from '@/components/AuthScreen';
+import TelegramLinkDialog from '@/components/TelegramLinkDialog';
 import { supabase } from '@/lib/supabase';
 import {
   Category,
@@ -185,6 +186,7 @@ function Dashboard({
   >(undefined);
   const [catModalVisible, setCatModalVisible] = React.useState(false);
   const [cardModalVisible, setCardModalVisible] = React.useState(false);
+  const [telegramVisible, setTelegramVisible] = React.useState(false);
   const [deletingTx, setDeletingTx] = React.useState<Transaction | null>(null);
 
   const competenceMonth = React.useMemo(
@@ -229,6 +231,11 @@ function Dashboard({
 
   React.useEffect(() => {
     void loadData();
+    function refreshOnReturn() {
+      if (document.visibilityState === 'visible') void loadData();
+    }
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => document.removeEventListener('visibilitychange', refreshOnReturn);
   }, [loadData]);
 
   const displayedBalance = realBalance?.month === competenceMonth ? realBalance : null;
@@ -456,12 +463,14 @@ function Dashboard({
           onOpenNewTransaction={handleOpenNewTransaction}
           onOpenCards={() => setCardModalVisible(true)}
           onOpenCategories={() => setCatModalVisible(true)}
+          onOpenTelegram={() => setTelegramVisible(true)}
           onSignOut={handleSignOut}
           signingOut={signingOut}
           darkMode={darkMode}
           onToggleDarkMode={onToggleDarkMode}
           userEmail={userEmail}
         />
+        {telegramVisible && <TelegramLinkDialog client={client} onClose={() => setTelegramVisible(false)} />}
 
         {loadError && (
           <div className="flex align-items-center gap-2 mb-3">
