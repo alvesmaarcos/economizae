@@ -34,6 +34,10 @@ alter table public.telegram_links enable row level security;
 alter table public.telegram_drafts enable row level security;
 revoke all on public.telegram_links, public.telegram_drafts from public, anon, authenticated;
 grant select, insert, update, delete on public.telegram_links, public.telegram_drafts to service_role;
+grant select on public.cards to service_role;
+-- SELECT FOR KEY SHARE also requires UPDATE on at least one column of the table.
+grant update (id) on public.cards to service_role;
+grant insert on public.transactions to service_role;
 
 create or replace function public.issue_telegram_link(account uuid, hashed_code text)
 returns boolean language plpgsql set search_path = '' as $$
