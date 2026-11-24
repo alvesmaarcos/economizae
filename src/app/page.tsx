@@ -7,6 +7,7 @@ import { Toast } from 'primereact/toast';
 import { Dialog } from 'primereact/dialog';
 import { Button } from 'primereact/button';
 import Header from '@/components/Header';
+import BalanceAdjustmentDialog from '@/components/BalanceAdjustmentDialog';
 import SummaryCards from '@/components/SummaryCards';
 import BillsToPaySection from '@/components/BillsToPaySection';
 import CategoryCharts from '@/components/CategoryCharts';
@@ -29,7 +30,8 @@ import {
   formatBRL,
   formatCompetenceMonthBR,
   formatDateBR,
-  getCompetenceMonth
+  getCompetenceMonth,
+  getBalanceReferenceDate
 } from '@/lib/finance-calculations';
 import { setupPrimeReactLocale } from '@/lib/primereact-locale';
 import { createFinanceRepository } from '@/services/finance-repository';
@@ -168,6 +170,12 @@ function Dashboard({
     React.useState<TransactionTabFilter>('all');
   const [signingOut, setSigningOut] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [realBalance, setRealBalance] = React.useState<{
+    month: string;
+    date: string;
+    amount: number;
+  } | null>(null);
+  const [editingBalance, setEditingBalance] = React.useState(false);
 
   // Modais
   const [txModalVisible, setTxModalVisible] = React.useState(false);
@@ -198,17 +206,20 @@ function Dashboard({
   const loadData = React.useCallback(async () => {
     if (activeMonth.current !== competenceMonth) return;
     const id = ++requestId.current;
+    const referenceDate = getBalanceReferenceDate(competenceMonth);
 
     try {
-      const [cats, loadedCards, txs] = await Promise.all([
+      const [cats, loadedCards, txs, cashBalance] = await Promise.all([
         financeRepository.listCategories(),
         financeRepository.listCards(),
-        financeRepository.listTransactionsByMonth(competenceMonth)
+        financeRepository.listTransactionsByMonth(competenceMonth),
+        financeRepository.getRealBalance(referenceDate)
       ]);
       if (requestId.current !== id) return;
       setCategories(cats);
       setCards(loadedCards);
       setTransactions(txs);
+      setRealBalance({ month: competenceMonth, date: referenceDate, amount: cashBalance });
       setLoadError(null);
     } catch (error) {
       if (requestId.current !== id) return;
@@ -220,10 +231,16 @@ function Dashboard({
     void loadData();
   }, [loadData]);
 
+  const displayedBalance = realBalance?.month === competenceMonth ? realBalance : null;
   const summary = React.useMemo(
-    () => calculateMonthlySummary(transactions),
-    [transactions]
+    () => calculateMonthlySummary(transactions, undefined, displayedBalance?.amount),
+    [transactions, displayedBalance]
   );
+
+  async function handleSaveBalance(date: string, amount: number) {
+    await financeRepository.saveBalanceAdjustment(date, amount);
+    await loadData();
+  }
 
   function showActionError(error: unknown) {
     toastRef.current?.show({
@@ -267,7 +284,7 @@ function Dashboard({
     const created = await financeRepository.createTransactions(input, cards);
     await loadData();
 
-    const firstTx = created[0];
+    const firstTx = created.find((transaction) => transaction.status === 'pending') ?? created[0];
     if (
       firstInvoiceMonth &&
       firstInvoiceMonth !== competenceMonth &&
@@ -456,6 +473,8 @@ function Dashboard({
         <SummaryCards
           summary={summary}
           onFilterSelect={(tab) => setActiveTab(tab)}
+          balanceDate={displayedBalance?.date ?? null}
+          onEditBalance={() => setEditingBalance(true)}
         />
 
         <BillsToPaySection
@@ -487,6 +506,14 @@ function Dashboard({
           onDeleteRequest={(tx) => setDeletingTx(tx)}
         />
       </div>
+
+      {editingBalance && (
+        <BalanceAdjustmentDialog
+          referenceDate={getBalanceReferenceDate(competenceMonth)}
+          onSave={handleSaveBalance}
+          onHide={() => setEditingBalance(false)}
+        />
+      )}
 
       {/* Modal de Criar/Editar Lançamento */}
       <TransactionModal

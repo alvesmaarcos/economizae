@@ -9,10 +9,10 @@ Aplicativo web responsivo construído com **Next.js (App Router)**, **TypeScript
   - **Saídas Pagas**: Despesas efetivamente quitadas no mês.
   - **Contas a Pagar (Saídas Pendentes)**: Lista dedicada ordenada por vencimento, com alertas automáticos de contas **Vencidas**, **Vencendo Hoje** e **A Vencer**, além de botão **"Pagar"** em 1 clique.
   - **Duplo Indicador de Saldo**:
-    - **Saldo Atual em Caixa**: `Entradas Recebidas − Saídas Pagas`
-    - **Saldo Previsto no Fim do Mês**: `Total de Entradas − Total de Saídas (Pagas + Contas a Pagar)`
+    - **Saldo Real em Caixa**: acumulado de recebimentos e pagamentos desde o último saldo informado, com transporte de sobras e déficits entre meses. Use **Editar saldo real** para informar o valor em caixa ao fim de uma data.
+    - **Saldo Previsto no Fim do Mês**: saldo real acrescido das entradas pendentes e descontado das despesas pendentes do mês selecionado.
 - **Recorrência e Parcelamentos**:
-  - Lançamentos **Únicos**, **Fixos Mensais** (12 meses) e **Parcelados** (`2x` a `60x`, gerando automaticamente as parcelas nos meses seguintes).
+  - Lançamentos **Únicos**, **Fixos Mensais** (12 meses) e **Parcelados** (`2x` a `60x`, com opção de registrar no histórico parcelas já pagas).
 - **Gráficos Interativos (`PrimeReact Chart` / `Chart.js`)**:
   - Rosca de Despesas por Categoria (detalhando Pago vs. Pendente) e Barras de Fluxo Mensal.
 - **Contas individuais**. Cada pessoa entra com e-mail e senha e acessa seus dados no Supabase.
@@ -34,7 +34,7 @@ Acesse `http://localhost:3000` no navegador.
 
 ## Configurando o Supabase
 
-1. No SQL Editor do Supabase, execute [supabase/schema.sql](./supabase/schema.sql) em um banco novo. Para um banco que já recebeu o schema anterior, execute [supabase/account-access.sql](./supabase/account-access.sql).
+1. No SQL Editor do Supabase, execute [supabase/schema.sql](./supabase/schema.sql) em um banco novo. Para um banco que já recebeu o schema anterior, aplique as atualizações que ainda faltam: [supabase/account-access.sql](./supabase/account-access.sql) para o login e [supabase/balance-adjustments.sql](./supabase/balance-adjustments.sql) para o saldo acumulado.
 2. Copie `.env.example` para `.env.local` e preencha `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Use a chave pública Publishable ou a chave `anon` legada.
 3. Para publicar na Vercel, configure as mesmas variáveis em **Production** antes do deploy.
 4. No Supabase Auth, habilite o cadastro por e-mail e **Confirm email**, defina a **Site URL** como a URL de produção e configure SMTP para enviar confirmações a usuários externos.

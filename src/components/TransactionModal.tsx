@@ -112,6 +112,8 @@ export default function TransactionModal({
   const [recurrenceType, setRecurrenceType] =
     React.useState<RecurrenceType>('single');
   const [installmentTotal, setInstallmentTotal] = React.useState<number>(2);
+  const [paidInstallments, setPaidInstallments] = React.useState<number>(0);
+  const creatingInstallments = !editingTransaction && recurrenceType === 'installment';
   const [notes, setNotes] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
@@ -160,7 +162,9 @@ export default function TransactionModal({
       setDescription(editingTransaction.description);
       setAmount(Number(editingTransaction.amount));
       const baseDateStr =
-        editingTransaction.purchase_date || editingTransaction.due_date;
+        editingTransaction.card_id && editingTransaction.payment_method === 'credit_card'
+          ? editingTransaction.purchase_date || editingTransaction.due_date
+          : editingTransaction.due_date;
       setPurchaseOrDueDate(parseISODateLocal(baseDateStr));
       setCategoryId(editingTransaction.category_id);
       setPaymentMethod(editingTransaction.payment_method);
@@ -195,6 +199,7 @@ export default function TransactionModal({
     setCardId(initialPreset?.card_id || (cards[0]?.id ?? null));
     setRecurrenceType('single');
     setInstallmentTotal(2);
+    setPaidInstallments(0);
     setNotes('');
   }, [
     visible,
@@ -296,6 +301,11 @@ export default function TransactionModal({
     installmentTotal
   ]);
 
+  const firstInstallmentDue = creditInvoicePreview?.firstDueISO ?? toISODateString(purchaseOrDueDate);
+  const firstPendingDue = creatingInstallments && paidInstallments < installmentTotal
+    ? addMonthsToISODate(firstInstallmentDue, paidInstallments)
+    : null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!description.trim()) {
@@ -324,19 +334,38 @@ export default function TransactionModal({
           : selectedDateISO;
 
       if (editingTransaction) {
+        const originalPurchaseDate = editingTransaction.purchase_date || editingTransaction.due_date;
+        const unchangedSchedule = paymentMethod === editingTransaction.payment_method &&
+          (isCardPayment ? cardId : null) === editingTransaction.card_id &&
+          selectedDateISO === (paymentMethod === 'credit_card'
+            ? originalPurchaseDate
+            : editingTransaction.due_date);
+        const installmentOffset = (editingTransaction.installment_current ?? 1) - 1;
+        const dueDate = unchangedSchedule
+          ? editingTransaction.due_date
+          : addMonthsToISODate(
+              effectiveDueDateISO,
+              creditInvoicePreview ? installmentOffset : 0
+            );
         await onSaveUpdate(editingTransaction.id, {
           description: description.trim(),
           amount: Number(amount),
           type,
           status,
-          purchase_date: selectedDateISO,
-          due_date: effectiveDueDateISO,
+          purchase_date: unchangedSchedule ? editingTransaction.purchase_date : selectedDateISO,
+          due_date: dueDate,
+          paid_at: status === 'paid' && editingTransaction.status === 'paid'
+            ? editingTransaction.paid_at
+            : undefined,
           category_id: categoryId,
           payment_method: paymentMethod,
           card_id: isCardPayment ? cardId : null,
           notes: notes.trim() || null
         });
       } else {
+        const invoiceDate = creatingInstallments
+          ? firstPendingDue
+          : creditInvoicePreview?.firstDueISO;
         await onSaveCreate(
           {
             description: description.trim(),
@@ -351,9 +380,12 @@ export default function TransactionModal({
             recurrence_type: recurrenceType,
             installment_total:
               recurrenceType === 'installment' ? installmentTotal : null,
+            paid_installments: creatingInstallments ? paidInstallments : undefined,
             notes: notes.trim() || null
           },
-          creditInvoicePreview?.firstMonth
+          creditInvoicePreview && invoiceDate
+            ? getCompetenceMonthFromDate(invoiceDate)
+            : undefined
         );
       }
       onHide();
@@ -659,16 +691,18 @@ export default function TransactionModal({
                     />
                   </div>
 
-                  <div className="text-sm mt-1">
-                    <i className="pi pi-bolt text-orange-500 mr-1" />
-                    Você pagará este valor em:{' '}
-                    <strong className="text-orange-500">
-                      {formatDateBR(creditInvoicePreview.firstDueISO)} (Fatura
-                      de {creditInvoicePreview.firstMonthLabel})
-                    </strong>
-                  </div>
+                  {!creatingInstallments && (
+                    <div className="text-sm mt-1">
+                      <i className="pi pi-bolt text-orange-500 mr-1" />
+                      Você pagará este valor em:{' '}
+                      <strong className="text-orange-500">
+                        {formatDateBR(creditInvoicePreview.firstDueISO)} (Fatura
+                        de {creditInvoicePreview.firstMonthLabel})
+                      </strong>
+                    </div>
+                  )}
 
-                  {recurrenceType === 'installment' && (
+                  {creatingInstallments && (
                     <div className="text-xs text-color-secondary mt-1">
                       Parcelamento em <strong>{installmentTotal}x</strong>: 1ª
                       parcela em{' '}
@@ -712,7 +746,9 @@ export default function TransactionModal({
             >
               {isCardPayment
                 ? 'Data da Compra *'
-                : status === 'pending'
+                : creatingInstallments
+                  ? 'Data do Primeiro Vencimento *'
+                  : status === 'pending'
                   ? 'Data de Vencimento *'
                   : 'Data do Lançamento *'}
             </label>
@@ -729,25 +765,27 @@ export default function TransactionModal({
             />
           </div>
 
-          <div className="col-12 md:col-7">
-            <label className="block text-sm font-medium mb-1">
-              Situação Atual
-            </label>
-            <SelectButton
-              value={status}
-              options={statusOptions}
-              onChange={(e) => {
-                if (e.value) setStatus(e.value);
-              }}
-              className="w-full"
-              itemTemplate={(opt) => (
-                <div className="flex align-items-center gap-1">
-                  <i className={opt.icon} />
-                  <span className="text-xs font-semibold">{opt.label}</span>
-                </div>
-              )}
-            />
-          </div>
+          {!creatingInstallments && (
+            <div className="col-12 md:col-7">
+              <label className="block text-sm font-medium mb-1">
+                Situação Atual
+              </label>
+              <SelectButton
+                value={status}
+                options={statusOptions}
+                onChange={(e) => {
+                  if (e.value) setStatus(e.value);
+                }}
+                className="w-full"
+                itemTemplate={(opt) => (
+                  <div className="flex align-items-center gap-1">
+                    <i className={opt.icon} />
+                    <span className="text-xs font-semibold">{opt.label}</span>
+                  </div>
+                )}
+              />
+            </div>
+          )}
         </div>
 
         {/* Recorrência e Parcelamento (apenas na criação) */}
@@ -782,12 +820,17 @@ export default function TransactionModal({
 
               {recurrenceType === 'installment' && (
                 <div className="col-12 md:col-4">
-                  <label className="block text-xs font-medium mb-1">
+                  <label htmlFor="tx-installment-total" className="block text-xs font-medium mb-1">
                     Nº de Parcelas
                   </label>
                   <InputNumber
+                    inputId="tx-installment-total"
                     value={installmentTotal}
-                    onValueChange={(e) => setInstallmentTotal(e.value || 2)}
+                    onValueChange={(e) => {
+                      const total = e.value || 2;
+                      setInstallmentTotal(total);
+                      setPaidInstallments((paid) => Math.min(paid, total));
+                    }}
                     showButtons
                     min={2}
                     max={60}
@@ -798,6 +841,30 @@ export default function TransactionModal({
                 </div>
               )}
             </div>
+            {creatingInstallments && (
+              <div className="mt-2">
+                <label htmlFor="tx-paid-installments" className="block text-sm font-medium mb-1">
+                  Parcelas já pagas
+                </label>
+                <InputNumber
+                  inputId="tx-paid-installments"
+                  value={paidInstallments}
+                  onValueChange={(e) => setPaidInstallments(e.value ?? 0)}
+                  min={0}
+                  max={installmentTotal}
+                  showButtons
+                  aria-describedby="tx-installment-help"
+                />
+                <p id="tx-installment-help" className="text-xs text-color-secondary mt-2 mb-1">
+                  As parcelas já pagas serão registradas no histórico com a data do vencimento.
+                </p>
+                <p className="text-sm m-0" aria-live="polite">
+                  {firstPendingDue
+                    ? `Próxima parcela pendente: ${paidInstallments + 1}/${installmentTotal} em ${formatDateBR(firstPendingDue)}.`
+                    : 'Todas as parcelas estão quitadas.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

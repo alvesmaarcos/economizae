@@ -29,6 +29,24 @@ async function defaultRecordId(userId: string, templateId: string): Promise<stri
 
 export function createFinanceRepository(supabase: SupabaseClient, userId: string) {
   return {
+    async getRealBalance(asOfDate: string): Promise<number> {
+      const { data, error } = await supabase.rpc('get_real_balance', {
+        as_of_date: asOfDate
+      });
+      if (error) throw new Error(error.message);
+      return Number(data);
+    },
+
+    async saveBalanceAdjustment(date: string, amount: number): Promise<void> {
+      const { error } = await supabase
+        .from('balance_adjustments')
+        .upsert(
+          { user_id: userId, balance_date: date, amount },
+          { onConflict: 'user_id,balance_date' }
+        );
+      if (error) throw new Error(error.message);
+    },
+
     /**
      * Lista todas as categorias disponíveis
      */
@@ -277,6 +295,7 @@ export function createFinanceRepository(supabase: SupabaseClient, userId: string
       const normalizedUpdates: Partial<Transaction> = { ...updates };
 
       if (
+        !updates.due_date &&
         updates.payment_method === 'credit_card' &&
         updates.card_id &&
         updates.purchase_date
@@ -291,6 +310,7 @@ export function createFinanceRepository(supabase: SupabaseClient, userId: string
           );
         }
       } else if (
+        !updates.due_date &&
         updates.payment_method === 'debit_card' &&
         updates.purchase_date
       ) {
@@ -302,7 +322,7 @@ export function createFinanceRepository(supabase: SupabaseClient, userId: string
           normalizedUpdates.due_date
         );
       }
-      if (updates.status === 'paid' && !updates.paid_at) {
+      if (updates.status === 'paid' && updates.paid_at === undefined) {
         normalizedUpdates.paid_at = toISODateString(new Date());
       } else if (updates.status === 'pending') {
         normalizedUpdates.paid_at = null;
