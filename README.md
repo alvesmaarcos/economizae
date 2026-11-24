@@ -47,7 +47,7 @@ Ao abrir a nova versão na mesma origem, o navegador remove os antigos dados fin
 
 1. Aplique [supabase/telegram.sql](./supabase/telegram.sql) no SQL Editor do Supabase depois de configurar o esquema principal.
 2. No ambiente do servidor, configure `TELEGRAM_BOT_TOKEN` (do BotFather), `GEMINI_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` e `TELEGRAM_WEBHOOK_SECRET`. Gere um segredo exclusivo para o webhook com `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. `GEMINI_MODEL` é opcional e usa `gemini-3.1-flash-lite` por padrão. Essas variáveis são privadas. Para usar o plano gratuito do Gemini, use uma chave de um projeto sem faturamento ativo e com cota disponível para o modelo.
-3. Publique a aplicação com essas variáveis. Com o mesmo token do bot e o mesmo segredo do webhook disponíveis no ambiente do terminal, registre o webhook na URL pública da aplicação. Se você guardou as variáveis em `.env.local`, use Node.js 20.6 ou mais recente e rode:
+3. Publique a aplicação com essas variáveis. Na Vercel, copie o **domínio público de produção** em **Settings → Domains**. Use um domínio que abra sem login da Vercel. Com o mesmo token do bot e o mesmo segredo do webhook disponíveis no terminal, rode o comando abaixo com Node.js 20.6 ou mais recente e substitua o endereço pelo domínio do seu projeto:
 
    ```bash
    node --env-file=.env.local scripts/set-telegram-webhook.mjs https://seu-app.vercel.app
@@ -58,3 +58,11 @@ Ao abrir a nova versão na mesma origem, o navegador remove os antigos dados fin
 5. Envie `-25 corte de cabelo`, confira o resumo e toque em **Confirmar**. O painel mostra o lançamento ao voltar à aba ou atualizar a página. Para registrar só a parcela atual e as seguintes, envie uma mensagem como `R$ 120 por parcela da geladeira, parcela 3 de 10 no Nubank, vence em 10/12 e ainda não paguei`.
 
 O bot atende em conversas individuais vinculadas e pede confirmação antes de qualquer lançamento. **Desvincular Telegram** invalida os rascunhos daquele chat. Mensagens financeiras são processadas pelo Gemini, e o Google pode usar o texto para melhorar seus produtos no plano gratuito.
+
+Se o bot ficar em silêncio, consulte o endereço registrado e o último erro de entrega. Esse comando só precisa do `TELEGRAM_BOT_TOKEN` local e não altera o webhook:
+
+```bash
+node --env-file=.env.local scripts/set-telegram-webhook.mjs --status
+```
+
+Para vincular, gere um link no painel e toque **Iniciar** no Telegram. O link envia o código de vínculo junto com `/start` e vale por 10 minutos. Digitar `/start` sozinho abre a conversa sem enviar esse código.
