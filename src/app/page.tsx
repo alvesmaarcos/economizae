@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import type { Session, SupabaseClient } from '@supabase/supabase-js';
+import { Message } from 'primereact/message';
 import { Toast } from 'primereact/toast';
 import { Dialog } from 'primereact/dialog';
 import { Button } from 'primereact/button';
@@ -14,12 +16,11 @@ import TransactionList, {
 import TransactionModal from '@/components/TransactionModal';
 import CategoryModal from '@/components/CategoryModal';
 import CardModal from '@/components/CardModal';
-import AuthModal from '@/components/AuthModal';
+import AuthScreen from '@/components/AuthScreen';
+import { supabase } from '@/lib/supabase';
 import {
   Category,
   CreateTransactionInput,
-  DEFAULT_CARDS,
-  DEFAULT_CATEGORIES,
   PaymentCard,
   Transaction
 } from '@/types/finance';
@@ -31,9 +32,128 @@ import {
   getCompetenceMonth
 } from '@/lib/finance-calculations';
 import { setupPrimeReactLocale } from '@/lib/primereact-locale';
-import { financeRepository } from '@/services/finance-repository';
+import { createFinanceRepository } from '@/services/finance-repository';
+
+const legacyFinanceKeys = [
+  'economizae_transactions_v1',
+  'economizae_categories_v1',
+  'economizae_cards_v1',
+  'economizae_seeded_v1'
+];
 
 export default function HomePage() {
+  const [darkMode, setDarkMode] = React.useState(false);
+
+  React.useEffect(() => {
+    setupPrimeReactLocale();
+    try {
+      for (const key of legacyFinanceKeys) window.localStorage.removeItem(key);
+      setDarkMode(window.localStorage.getItem('economizae_dark_mode') === 'true');
+    } catch {
+      // The sign-in screen can still render if browser storage is blocked.
+    }
+  }, []);
+
+  React.useEffect(() => {
+    document.documentElement.classList.toggle('dark-theme', darkMode);
+  }, [darkMode]);
+
+  function toggleDarkMode() {
+    const next = !darkMode;
+    setDarkMode(next);
+    try {
+      window.localStorage.setItem('economizae_dark_mode', String(next));
+    } catch {
+      // Keep the selected theme for this page even without browser storage.
+    }
+  }
+
+  if (!supabase) {
+    return (
+      <main className="p-4">
+        <Message severity="error" text="O Supabase não está configurado. Confira a URL e a chave pública da aplicação." />
+      </main>
+    );
+  }
+
+  return <AuthenticatedApp client={supabase} darkMode={darkMode} onToggleDarkMode={toggleDarkMode} />;
+}
+
+function AuthenticatedApp({
+  client,
+  darkMode,
+  onToggleDarkMode
+}: {
+  client: SupabaseClient;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
+}) {
+  const [session, setSession] = React.useState<Session | null>();
+  const [sessionError, setSessionError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    let sessionChanged = false;
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, nextSession) => {
+      if (!active || event === 'INITIAL_SESSION') return;
+      sessionChanged = true;
+      setSessionError(null);
+      setSession(nextSession);
+    });
+
+    void client.auth.getSession().then(({ data, error }) => {
+      if (!active || sessionChanged) return;
+      setSessionError(error?.message ?? null);
+      setSession(error ? null : data.session);
+    }).catch((error: unknown) => {
+      if (!active || sessionChanged) return;
+      setSessionError(error instanceof Error ? error.message : 'Não foi possível verificar a sessão.');
+      setSession(null);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [client]);
+
+  if (session === undefined) {
+    return <main className="p-4" role="status">Verificando sessão…</main>;
+  }
+
+  if (!session) {
+    return <AuthScreen supabase={client} sessionError={sessionError} />;
+  }
+
+  return (
+    <Dashboard
+      key={session.user.id}
+      client={client}
+      userId={session.user.id}
+      userEmail={session.user.email ?? null}
+      darkMode={darkMode}
+      onToggleDarkMode={onToggleDarkMode}
+    />
+  );
+}
+
+function Dashboard({
+  client,
+  userId,
+  userEmail,
+  darkMode,
+  onToggleDarkMode
+}: {
+  client: SupabaseClient;
+  userId: string;
+  userEmail: string | null;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
+}) {
+  const financeRepository = React.useMemo(
+    () => createFinanceRepository(client, userId),
+    [client, userId]
+  );
   const toastRef = React.useRef<Toast>(null);
 
   const [selectedMonthDate, setSelectedMonthDate] = React.useState<Date>(() => {
@@ -42,16 +162,12 @@ export default function HomePage() {
   });
 
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
-  const [categories, setCategories] =
-    React.useState<Category[]>(DEFAULT_CATEGORIES);
-  const [cards, setCards] = React.useState<PaymentCard[]>(DEFAULT_CARDS);
+  const [categories, setCategories] = React.useState<Category[]>([]);
+  const [cards, setCards] = React.useState<PaymentCard[]>([]);
   const [activeTab, setActiveTab] =
     React.useState<TransactionTabFilter>('all');
-  const [darkMode, setDarkMode] = React.useState<boolean>(false);
-  const [storageMode, setStorageMode] = React.useState<'supabase' | 'local'>(
-    'local'
-  );
-  const [userEmail, setUserEmail] = React.useState<string | null>(null);
+  const [signingOut, setSigningOut] = React.useState(false);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
 
   // Modais
   const [txModalVisible, setTxModalVisible] = React.useState(false);
@@ -61,49 +177,47 @@ export default function HomePage() {
   >(undefined);
   const [catModalVisible, setCatModalVisible] = React.useState(false);
   const [cardModalVisible, setCardModalVisible] = React.useState(false);
-  const [authModalVisible, setAuthModalVisible] = React.useState(false);
   const [deletingTx, setDeletingTx] = React.useState<Transaction | null>(null);
-
-  React.useEffect(() => {
-    setupPrimeReactLocale();
-    const savedTheme = window.localStorage.getItem('economizae_dark_mode');
-    if (savedTheme === 'true') {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark-theme');
-    }
-  }, []);
 
   const competenceMonth = React.useMemo(
     () => getCompetenceMonth(selectedMonthDate),
     [selectedMonthDate]
   );
 
+  const activeMonth = React.useRef<string | null>(null);
+  const requestId = React.useRef(0);
+
+  React.useLayoutEffect(() => {
+    activeMonth.current = competenceMonth;
+    return () => {
+      activeMonth.current = null;
+      requestId.current += 1;
+    };
+  }, [competenceMonth]);
+
   const loadData = React.useCallback(async () => {
+    if (activeMonth.current !== competenceMonth) return;
+    const id = ++requestId.current;
+
     try {
-      const [statusInfo, cats, loadedCards, txs] = await Promise.all([
-        financeRepository.getActiveStorageMode(),
+      const [cats, loadedCards, txs] = await Promise.all([
         financeRepository.listCategories(),
         financeRepository.listCards(),
         financeRepository.listTransactionsByMonth(competenceMonth)
       ]);
-      setStorageMode(statusInfo.mode);
-      setUserEmail(statusInfo.userEmail);
+      if (requestId.current !== id) return;
       setCategories(cats);
       setCards(loadedCards);
       setTransactions(txs);
-    } catch (err) {
-      toastRef.current?.show({
-        severity: 'error',
-        summary: 'Erro ao carregar dados',
-        detail:
-          err instanceof Error ? err.message : 'Falha inesperada na leitura.',
-        life: 4000
-      });
+      setLoadError(null);
+    } catch (error) {
+      if (requestId.current !== id) return;
+      setLoadError(error instanceof Error ? error.message : 'Falha inesperada na leitura.');
     }
-  }, [competenceMonth]);
+  }, [competenceMonth, financeRepository]);
 
   React.useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData]);
 
   const summary = React.useMemo(
@@ -111,16 +225,26 @@ export default function HomePage() {
     [transactions]
   );
 
-  const handleToggleDarkMode = () => {
-    const next = !darkMode;
-    setDarkMode(next);
-    window.localStorage.setItem('economizae_dark_mode', String(next));
-    if (next) {
-      document.documentElement.classList.add('dark-theme');
-    } else {
-      document.documentElement.classList.remove('dark-theme');
+  function showActionError(error: unknown) {
+    toastRef.current?.show({
+      severity: 'error',
+      summary: 'Não foi possível concluir a operação',
+      detail: error instanceof Error ? error.message : 'Tente novamente.',
+      life: 4500
+    });
+  }
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      const { error } = await client.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+    } catch (error) {
+      showActionError(error);
+    } finally {
+      setSigningOut(false);
     }
-  };
+  }
 
   const handleOpenNewTransaction = (
     preset?: Partial<CreateTransactionInput>
@@ -315,12 +439,19 @@ export default function HomePage() {
           onOpenNewTransaction={handleOpenNewTransaction}
           onOpenCards={() => setCardModalVisible(true)}
           onOpenCategories={() => setCatModalVisible(true)}
-          onOpenCloudModal={() => setAuthModalVisible(true)}
+          onSignOut={handleSignOut}
+          signingOut={signingOut}
           darkMode={darkMode}
-          onToggleDarkMode={handleToggleDarkMode}
-          storageMode={storageMode}
+          onToggleDarkMode={onToggleDarkMode}
           userEmail={userEmail}
         />
+
+        {loadError && (
+          <div className="flex align-items-center gap-2 mb-3">
+            <Message severity="error" text={`Erro ao carregar dados. ${loadError}`} />
+            <Button label="Tentar novamente" text onClick={loadData} />
+          </div>
+        )}
 
         <SummaryCards
           summary={summary}
@@ -332,8 +463,8 @@ export default function HomePage() {
           categories={categories}
           cards={cards}
           competenceMonth={competenceMonth}
-          onTogglePaid={handleToggleStatus}
-          onPayCardInvoice={handlePayCardInvoice}
+          onTogglePaid={(tx) => handleToggleStatus(tx).catch(showActionError)}
+          onPayCardInvoice={(id, name) => handlePayCardInvoice(id, name).catch(showActionError)}
           onEdit={handleOpenEditTransaction}
           onOpenNewBill={handleOpenNewTransaction}
         />
@@ -351,7 +482,7 @@ export default function HomePage() {
           cards={cards}
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          onToggleStatus={handleToggleStatus}
+          onToggleStatus={(tx) => handleToggleStatus(tx).catch(showActionError)}
           onEdit={handleOpenEditTransaction}
           onDeleteRequest={(tx) => setDeletingTx(tx)}
         />
@@ -378,7 +509,7 @@ export default function HomePage() {
         cards={cards}
         onCreateCard={handleCreateCard}
         onUpdateCard={handleUpdateCard}
-        onDeleteCard={handleDeleteCard}
+        onDeleteCard={(id) => handleDeleteCard(id).catch(showActionError)}
       />
 
       {/* Modal de Categorias */}
@@ -387,16 +518,7 @@ export default function HomePage() {
         onHide={() => setCatModalVisible(false)}
         categories={categories}
         onCreateCategory={handleCreateCategory}
-        onDeleteCategory={handleDeleteCategory}
-      />
-
-      {/* Modal de Nuvem Supabase / Backup */}
-      <AuthModal
-        visible={authModalVisible}
-        onHide={() => setAuthModalVisible(false)}
-        storageMode={storageMode}
-        userEmail={userEmail}
-        onAuthChange={loadData}
+        onDeleteCategory={(id) => handleDeleteCategory(id).catch(showActionError)}
       />
 
       {/* Diálogo de Confirmação de Exclusão */}
@@ -428,13 +550,13 @@ export default function HomePage() {
                   icon="pi pi-trash"
                   severity="danger"
                   outlined
-                  onClick={() => handleConfirmDelete('single')}
+                  onClick={() => handleConfirmDelete('single').catch(showActionError)}
                 />
                 <Button
                   label="Excluir toda a série / todas as parcelas"
                   icon="pi pi-times-circle"
                   severity="danger"
-                  onClick={() => handleConfirmDelete('all_group')}
+                  onClick={() => handleConfirmDelete('all_group').catch(showActionError)}
                 />
                 <Button
                   label="Cancelar"
@@ -455,7 +577,7 @@ export default function HomePage() {
                   label="Excluir Lançamento"
                   icon="pi pi-trash"
                   severity="danger"
-                  onClick={() => handleConfirmDelete('single')}
+                  onClick={() => handleConfirmDelete('single').catch(showActionError)}
                 />
               </div>
             )}

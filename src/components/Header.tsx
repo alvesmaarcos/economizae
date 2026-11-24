@@ -4,7 +4,6 @@ import React from 'react';
 import { Toolbar } from 'primereact/toolbar';
 import { Button } from 'primereact/button';
 import { Calendar } from 'primereact/calendar';
-import { Tag } from 'primereact/tag';
 import '@/lib/primereact-locale';
 import { CreateTransactionInput } from '@/types/finance';
 
@@ -14,10 +13,10 @@ interface HeaderProps {
   onOpenNewTransaction: (preset?: Partial<CreateTransactionInput>) => void;
   onOpenCards: () => void;
   onOpenCategories: () => void;
-  onOpenCloudModal: () => void;
+  onSignOut: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
-  storageMode: 'supabase' | 'local';
+  signingOut: boolean;
   userEmail: string | null;
 }
 
@@ -27,10 +26,10 @@ export default function Header({
   onOpenNewTransaction,
   onOpenCards,
   onOpenCategories,
-  onOpenCloudModal,
+  onSignOut,
   darkMode,
   onToggleDarkMode,
-  storageMode,
+  signingOut,
   userEmail
 }: HeaderProps) {
   const handlePrevMonth = () => {
@@ -76,16 +75,7 @@ export default function Header({
         <i className="pi pi-wallet text-xl" />
       </div>
       <div>
-        <div className="flex align-items-center gap-2">
-          <span className="text-xl font-bold tracking-tight">Economizaê</span>
-          <Tag
-            value={storageMode === 'supabase' ? 'Nuvem Supabase' : 'Modo Local'}
-            icon={storageMode === 'supabase' ? 'pi pi-cloud' : 'pi pi-database'}
-            severity={storageMode === 'supabase' ? 'success' : 'info'}
-            className="cursor-pointer text-xs"
-            onClick={onOpenCloudModal}
-          />
-        </div>
+        <span className="text-xl font-bold tracking-tight">Economizaê</span>
         <p className="m-0 text-xs text-color-secondary">
           {userEmail
             ? `Conectado como ${userEmail}`
@@ -168,12 +158,13 @@ export default function Header({
         onClick={onOpenCategories}
       />
       <Button
-        icon={storageMode === 'supabase' ? 'pi pi-cloud-upload' : 'pi pi-sync'}
-        label="Dados / Nuvem"
+        icon="pi pi-sign-out"
+        label="Sair"
+        loading={signingOut}
         outlined
         size="small"
         severity="secondary"
-        onClick={onOpenCloudModal}
+        onClick={onSignOut}
       />
       <Button
         icon={darkMode ? 'pi pi-sun' : 'pi pi-moon'}

@@ -5,6 +5,7 @@ import { Dialog } from 'primereact/dialog';
 import { InputText } from 'primereact/inputtext';
 import { SelectButton } from 'primereact/selectbutton';
 import { Dropdown } from 'primereact/dropdown';
+import { Message } from 'primereact/message';
 import { Button } from 'primereact/button';
 import { Tag } from 'primereact/tag';
 import {
@@ -48,11 +49,13 @@ export default function CategoryModal({
   const [icon, setIcon] = React.useState<string>('pi-tag');
   const [color, setColor] = React.useState<string>('#3B82F6');
   const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await onCreateCategory({
         name: name.trim(),
@@ -61,6 +64,8 @@ export default function CategoryModal({
         color
       });
       setName('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível criar a categoria.');
     } finally {
       setSaving(false);
     }
@@ -80,6 +85,7 @@ export default function CategoryModal({
       modal
       draggable={false}
     >
+      {error && <Message severity="error" text={error} className="w-full mb-3" />}
       <form
         onSubmit={handleCreate}
         className="surface-ground p-3 border-round-lg border-1 surface-border mb-4"
