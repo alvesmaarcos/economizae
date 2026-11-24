@@ -13,6 +13,7 @@ interface HeaderProps {
   onOpenNewTransaction: (preset?: Partial<CreateTransactionInput>) => void;
   onOpenCards: () => void;
   onOpenCategories: () => void;
+  onOpenTelegram: () => void;
   onSignOut: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
@@ -26,6 +27,7 @@ export default function Header({
   onOpenNewTransaction,
   onOpenCards,
   onOpenCategories,
+  onOpenTelegram,
   onSignOut,
   darkMode,
   onToggleDarkMode,
@@ -156,6 +158,13 @@ export default function Header({
         outlined
         size="small"
         onClick={onOpenCategories}
+      />
+      <Button
+        icon="pi pi-send"
+        label="Telegram"
+        outlined
+        size="small"
+        onClick={onOpenTelegram}
       />
       <Button
         icon="pi pi-sign-out"

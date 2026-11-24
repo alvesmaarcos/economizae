@@ -338,7 +338,8 @@ export function generateRecurringTransactions(
   input: CreateTransactionInput,
   idGenerator: () => string = () => crypto.randomUUID(),
   selectedCard?: PaymentCard | null,
-  todayISO: string = toISODateString(new Date())
+  todayISO: string = toISODateString(new Date()),
+  installmentSchedule?: { start: number; currentDueDate: string; dueDay?: number }
 ): Omit<Transaction, 'created_at'>[] {
   const rawPurchaseDate = input.purchase_date || input.due_date;
   let baseDueDate = input.due_date;
@@ -411,8 +412,12 @@ export function generateRecurringTransactions(
 
     const items: Omit<Transaction, 'created_at'>[] = [];
 
-    for (let i = 0; i < totalInstallments; i++) {
-      const targetDueDate = addMonthsToISODate(baseDueDate, i);
+    const start = installmentSchedule?.start ?? 1;
+    const currentDueDate = installmentSchedule?.currentDueDate ?? baseDueDate;
+    const [year, month, day] = currentDueDate.split('-').map(Number);
+
+    for (let i = start - 1; i < totalInstallments; i++) {
+      const targetDueDate = buildSafeISODate(year, month - start + i, installmentSchedule?.dueDay ?? day);
       const installmentStatus = i < paidCount ? 'paid' : 'pending';
 
       items.push({
